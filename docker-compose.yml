@@ -1,0 +1,85 @@
+# ============================================
+# AI News Hub - Docker Compose
+# 本地开发环境服务
+# ============================================
+# 使用方式: docker-compose up -d
+# ============================================
+
+version: '3.8'
+
+services:
+  # ------------------------------------------
+  # PostgreSQL - 主数据库
+  # ------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai_news_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ai_news
+      POSTGRES_PASSWORD: ai_news_secret
+      POSTGRES_DB: ai_news
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_news -d ai_news"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------------------
+  # Redis - 缓存/会话/消息队列
+  # ------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ai_news_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ------------------------------------------
+  # Qdrant - 向量数据库 (Phase 3+ RAG)
+  # ------------------------------------------
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ai_news_qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC API
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# ============================================
+# Volumes - 数据持久化
+# ============================================
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  qdrant_data:
+    driver: local
+
+# ============================================
+# Network
+# ============================================
+networks:
+  default:
+    name: ai_news_network

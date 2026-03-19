@@ -1,0 +1,138 @@
+# ============================================
+# AI News Hub - .gitignore
+# ============================================
+
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# PyCharm
+.idea/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# ============================================
+# Node.js
+# ============================================
+node_modules/
+.npm
+.eslintcache
+.node_repl_history
+*.tgz
+.yarn-integrity
+
+# Production
+build/
+dist/
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Local env files
+*.local
+.env
+.env.*
+!.env.example
+
+# Vite
+dist/
+dist-ssr/
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ============================================
+# Database & Migrations
+# ============================================
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.local
+
+# Alembic
+alembic/versions/*.pyc
+alembic/versions/__pycache__/
+
+# ============================================
+# Docker
+# ============================================
+.docker/
+
+# ============================================
+# Testing
+# ============================================
+.coverage
+.pytest_cache/
+htmlcov/
+.mypy_cache/
+.tox/
+.nox/
+cover/
+
+# ============================================
+# OS
+# ============================================
+.DS_Store
+Thumbs.db
+
+# ============================================
+# Logs
+# ============================================
+*.log
+logs/
+*.log.*
+
+# ============================================
+# Secrets (NEVER commit)
+# ============================================
+*.pem
+*.key
+secrets/
+credentials.json
