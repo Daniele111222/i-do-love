@@ -42,7 +42,7 @@ export default function Register() {
     try {
       await registerUser(data.email, data.password, data.nickname);
       navigate('/');
-    } catch (e) {
+    } catch {
       // 错误已在 store 中处理
     }
   };

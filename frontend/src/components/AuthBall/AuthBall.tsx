@@ -258,7 +258,7 @@ function Scene({ size, state }: SceneProps) {
 export function AuthBall({
   state = 'default',
   size = 1.5,
-  mouseFollow: _mouseFollow = true,
+  mouseFollow: _mouseFollow = true, // eslint-disable-line no-unused-vars
   className = '',
 }: AuthBallProps) {
   return (

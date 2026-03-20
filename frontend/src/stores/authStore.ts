@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import type { User } from '@/types/user';
 import { login as loginApi, register as registerApi, logout as logoutApi } from '@/services/authService';
 
+/* eslint-disable no-unused-vars */
 interface AuthState {
   // 状态
   user: User | null;
@@ -20,6 +21,7 @@ interface AuthState {
   clearError: () => void;
   checkAuth: () => Promise<void>;
 }
+/* eslint-enable no-unused-vars */
 
 export const useAuthStore = create<AuthState>((set) => ({
   // 初始状态
@@ -102,7 +104,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         isAuthenticated: true,
         isLoading: false,
       });
-    } catch (error) {
+    } catch {
       set({
         user: null,
         isAuthenticated: false,

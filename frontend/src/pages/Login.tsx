@@ -32,7 +32,7 @@ export default function Login() {
     try {
       await login(data.email, data.password);
       navigate('/');
-    } catch (e) {
+    } catch {
       // 错误已在 store 中处理
     }
   };
