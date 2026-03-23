@@ -14,10 +14,10 @@ export const RoutePath = {
 } as const;
 
 // 使用 lazy 导入提升性能
-const Home = lazy(() => import('@/pages/Home'));
-const Login = lazy(() => import('@/pages/Login'));
-const Register = lazy(() => import('@/pages/Register'));
-const AuthBallTest = lazy(() => import('@/pages/AuthBallTest'));
+const Home = lazy(() => import('@/pages/Home/index'));
+const Login = lazy(() => import('@/pages/login/index'));
+const Register = lazy(() => import('@/pages/Register/index'));
+const AuthBallTest = lazy(() => import('@/pages/AuthBallTest/index'));
 
 /**
  * 路由配置数组
