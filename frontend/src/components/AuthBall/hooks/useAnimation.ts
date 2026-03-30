@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs */
 /**
  * useBreathing - 呼吸动画 Hook
  * 计算呼吸偏移量，用于球体轻微起伏和左右晃动

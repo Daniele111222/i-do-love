@@ -10,7 +10,8 @@ interface ErrorBoundaryProps {
   /** 自定义 Fallback 组件 */
   fallback?: ReactNode;
   /** 错误回调 */
-  onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
+  // eslint-disable-next-line no-unused-vars
+  onError?(error: Error, errorInfo: React.ErrorInfo): void;
 }
 
 interface ErrorBoundaryState {

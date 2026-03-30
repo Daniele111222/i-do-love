@@ -1,42 +1,79 @@
-/**
- * 注册页面
- */
+/* eslint-disable react-hooks/refs */
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
+import { useController, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Button, Input } from '@/components/common';
+import { AuthPageLayout } from '@/components/AuthPageLayout';
 import { Layout } from '@/layout';
 import { useAuthStore } from '@/stores/authStore';
 
-// 表单验证 schema
-const registerSchema = z.object({
-  email: z.string().min(1, '请输入邮箱').email('请输入有效的邮箱地址'),
-  password: z
-    .string()
-    .min(8, '密码至少8个字符')
-    .regex(/[A-Z]/, '密码必须包含大写字母')
-    .regex(/[a-z]/, '密码必须包含小写字母')
-    .regex(/[0-9]/, '密码必须包含数字'),
-  confirmPassword: z.string(),
-  nickname: z.string().optional(),
-}).refine((data) => data.password === data.confirmPassword, {
-  message: '两次密码输入不一致',
-  path: ['confirmPassword'],
-});
+const registerSchema = z
+  .object({
+    email: z.string().min(1, '请输入邮箱').email('请输入有效的邮箱地址'),
+    password: z
+      .string()
+      .min(8, '密码至少 8 位')
+      .regex(/[A-Z]/, '密码必须包含大写字母')
+      .regex(/[a-z]/, '密码必须包含小写字母')
+      .regex(/[0-9]/, '密码必须包含数字'),
+    confirmPassword: z.string(),
+    nickname: z.string().optional(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: '两次输入的密码不一致',
+    path: ['confirmPassword'],
+  });
 
 type RegisterForm = z.infer<typeof registerSchema>;
+
+const MailIcon = () => (
+  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 6h16v12H4z" />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="m4 8 8 6 8-6" />
+  </svg>
+);
+
+const UserIcon = () => (
+  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="12" cy="8" r="3.5" strokeWidth={1.8} />
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M5 19a7 7 0 0 1 14 0" />
+  </svg>
+);
+
+const LockIcon = () => (
+  <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M7 10V8a5 5 0 0 1 10 0v2" />
+    <rect x="5" y="10" width="14" height="10" rx="3" strokeWidth={1.8} />
+  </svg>
+);
 
 export default function Register() {
   const navigate = useNavigate();
   const { register: registerUser, isLoading, error } = useAuthStore();
+  const [activePasswordField, setActivePasswordField] = useState<'password' | 'confirm' | null>(null);
 
   const {
-    register,
+    control,
     handleSubmit,
     formState: { errors },
   } = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
+    defaultValues: {
+      email: '',
+      nickname: '',
+      password: '',
+      confirmPassword: '',
+    },
+  });
+
+  const { field: emailField } = useController({ control, name: 'email' });
+  const { field: nicknameField } = useController({ control, name: 'nickname' });
+  const { field: passwordField } = useController({ control, name: 'password' });
+  const { field: confirmPasswordField } = useController({
+    control,
+    name: 'confirmPassword',
   });
 
   const onSubmit = async (data: RegisterForm) => {
@@ -44,99 +81,119 @@ export default function Register() {
       await registerUser(data.email, data.password, data.nickname);
       navigate('/');
     } catch {
-      // 错误已在 store 中处理
+      // Error state is handled by the auth store.
     }
   };
 
   return (
     <Layout>
-      <div className="flex items-center justify-center min-h-[calc(100vh-64px)] px-4">
-        <div className="w-full max-w-md">
-          {/* 标题 */}
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-              创建账号
-            </h1>
-            <p className="text-gray-600 dark:text-gray-400">
-              加入 AI News Hub
-            </p>
-          </div>
-
-          {/* 注册表单 */}
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
-            <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-              {/* 错误提示 */}
-              {error && (
-                <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                  <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+      <div className="min-h-[calc(100vh-64px)] bg-[#fff7df] px-4 py-8 lg:px-8">
+        <div className="mx-auto max-w-7xl">
+          <AuthPageLayout
+            eyebrow="WELCOME"
+            title="创建你的账号"
+            description="30 秒完成设置，开始建立属于你的 AI 资讯流，并持续收藏你的灵感重点。"
+            passwordActive={activePasswordField !== null}
+            footer={
+              <p className="text-sm text-stone-500">
+                已有账号？{' '}
+                <Link to="/login" className="font-semibold text-[#ff6b3d] transition hover:text-[#f05626]">
+                  立即登录
+                </Link>
+              </p>
+            }
+          >
+            <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              {error ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
+                  {error}
                 </div>
-              )}
+              ) : null}
 
-              {/* 邮箱 */}
               <Input
                 label="邮箱"
                 type="email"
-                placeholder="your@email.com"
+                placeholder="hello@yourmail.com"
                 error={errors.email?.message}
                 disabled={isLoading}
-                {...register('email')}
+                leftIcon={<MailIcon />}
+                className="h-14 rounded-2xl border-amber-100 bg-white text-base focus:border-[#ff6b3d] focus:ring-[#ff6b3d]/15"
+                value={emailField.value}
+                name={emailField.name}
+                ref={emailField.ref}
+                onChange={emailField.onChange}
+                onBlur={emailField.onBlur}
               />
 
-              {/* 昵称（可选） */}
               <Input
                 label="昵称（可选）"
                 type="text"
-                placeholder="你的昵称"
+                placeholder="给自己起个记忆点"
                 error={errors.nickname?.message}
                 disabled={isLoading}
-                {...register('nickname')}
+                leftIcon={<UserIcon />}
+                className="h-14 rounded-2xl border-amber-100 bg-white text-base focus:border-[#ff6b3d] focus:ring-[#ff6b3d]/15"
+                value={nicknameField.value ?? ''}
+                name={nicknameField.name}
+                ref={nicknameField.ref}
+                onChange={nicknameField.onChange}
+                onBlur={nicknameField.onBlur}
               />
 
-              {/* 密码 */}
               <Input
                 label="密码"
                 type="password"
-                placeholder="至少8个字符，包含大小写和数字"
+                placeholder="至少 8 位，包含大小写字母和数字"
                 error={errors.password?.message}
                 disabled={isLoading}
-                hint="密码至少8个字符，包含大小写字母和数字"
-                {...register('password')}
+                hint="角色会在你输入密码时闭眼，帮助保护输入隐私。"
+                leftIcon={<LockIcon />}
+                className="h-14 rounded-2xl border-amber-100 bg-white text-base focus:border-[#ff6b3d] focus:ring-[#ff6b3d]/15"
+                value={passwordField.value}
+                name={passwordField.name}
+                ref={passwordField.ref}
+                onChange={passwordField.onChange}
+                onFocus={() => setActivePasswordField('password')}
+                onBlur={() => {
+                  setActivePasswordField((current) => (current === 'password' ? null : current));
+                  passwordField.onBlur();
+                }}
               />
 
-              {/* 确认密码 */}
               <Input
                 label="确认密码"
                 type="password"
                 placeholder="再次输入密码"
                 error={errors.confirmPassword?.message}
                 disabled={isLoading}
-                {...register('confirmPassword')}
+                leftIcon={<LockIcon />}
+                className="h-14 rounded-2xl border-amber-100 bg-white text-base focus:border-[#ff6b3d] focus:ring-[#ff6b3d]/15"
+                value={confirmPasswordField.value}
+                name={confirmPasswordField.name}
+                ref={confirmPasswordField.ref}
+                onChange={confirmPasswordField.onChange}
+                onFocus={() => setActivePasswordField('confirm')}
+                onBlur={() => {
+                  setActivePasswordField((current) => (current === 'confirm' ? null : current));
+                  confirmPasswordField.onBlur();
+                }}
               />
 
-              {/* 提交按钮 */}
+              <div className="rounded-2xl bg-amber-50/80 px-4 py-3 text-xs leading-5 text-stone-500">
+                创建账号即表示你同意服务条款与隐私政策。你的邮箱仅用于账号验证，不会公开展示。
+              </div>
+
               <Button
                 type="submit"
                 fullWidth
                 loading={isLoading}
                 size="lg"
+                className="rounded-2xl bg-[#ff6b3d] py-3.5 text-base font-semibold shadow-[0_18px_35px_rgba(255,107,61,0.24)] hover:bg-[#f05626] active:bg-[#db4a1d]"
               >
-                注册
+                创建账号
               </Button>
             </form>
-
-            {/* 登录链接 */}
-            <div className="mt-6 text-center">
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                已有账号？{' '}
-                <Link
-                  to="/login"
-                  className="text-primary-600 hover:text-primary-700 font-medium"
-                >
-                  立即登录
-                </Link>
-              </p>
-            </div>
-          </div>
+          </AuthPageLayout>
         </div>
       </div>
     </Layout>

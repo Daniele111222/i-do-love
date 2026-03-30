@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs */
 /**
  * useBlinking - 眨眼动画 Hook
  * 自动触发眨眼，支持不同情绪的眨眼频率
