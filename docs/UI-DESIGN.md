@@ -856,26 +856,58 @@ import { Heroicons } from '...';
 
 ## 附录 A：设计系统文件结构
 
+### 组件文件结构规范
+
+| 组件类型 | 结构 | 说明 |
+|---------|------|------|
+| **单文件组件** | `Component.tsx` | 简单组件，无子模块，如 `Header.tsx` |
+| **文件夹单组件** | `Folder/index.tsx` | 组件代码在 index.tsx 中，无需 barrel export |
+| **组件组** | `Folder/` + 多个 `.tsx` + `index.ts` | 多个组件需要统一导出 |
+| **复杂组件** | `Folder/index.tsx` + 子目录 | 有 hooks/types/scene 等子模块 |
+
+### 目录结构
+
 ```
 frontend/src/
 ├── styles/
 │   └── globals.css          # 全局样式 + Design Tokens
 ├── components/
-│   ├── common/              # 通用组件
+│   ├── common/              # 组件组：通用原子组件
+│   │   ├── index.ts         # barrel export
 │   │   ├── Button.tsx
 │   │   ├── Card.tsx
 │   │   └── Input.tsx
-│   ├── Header.tsx
-│   └── AuthBall/            # 3D 组件
+│   ├── Header/               # 文件夹单组件
+│   │   ├── index.ts          # barrel export
+│   │   └── index.tsx
+│   ├── AuthPageLayout/       # 文件夹单组件
+│   │   └── index.tsx
+│   └── AuthBall/            # 复杂组件：3D 拟人化球体
 │       ├── AuthBall.tsx
 │       ├── types/
 │       ├── scene/
 │       └── hooks/
 ├── layout/
+│   ├── index.ts             # barrel export
 │   └── Layout.tsx
 ├── pages/
 │   └── ...
 ```
+
+### Barrel Export 规范
+
+**组件组**（有多个组件文件）需要 `index.ts` 进行统一导出：
+
+```typescript
+// components/common/index.ts
+export { Button } from './Button';
+export { Card } from './Card';
+export { Input } from './Input';
+```
+
+**文件夹单组件** 和 **复杂组件** 不需要单独的 `index.ts`，直接通过文件夹导入：
+- `@/components/AuthPageLayout` → 自动解析到 `AuthPageLayout/index.tsx`
+- `@/components/AuthBall` → 自动解析到 `AuthBall/` 的入口文件
 
 ## 附录 B：快速参考
 

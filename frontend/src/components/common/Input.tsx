@@ -95,18 +95,19 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
             disabled={disabled || loading}
             className={twMerge(
               clsx(
-                'block rounded-lg border bg-white dark:bg-gray-800',
+                'block rounded-xl border-2 bg-white dark:bg-gray-800',
                 'text-gray-900 dark:text-gray-100',
                 'placeholder:text-gray-400 dark:placeholder:text-gray-500',
-                'transition-colors duration-200',
+                'transition-all duration-200',
                 sizeStyles[size],
-                leftIcon && 'pl-10',
-                (rightIcon || isPassword) && 'pr-10',
-                'focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent',
+                leftIcon && 'pl-11',
+                (rightIcon || isPassword) && 'pr-11',
+                // Focus 状态 - 增强效果
+                'focus:outline-none focus:ring-4 focus:ring-primary-500/20 focus:border-primary-500',
                 error
-                  ? 'border-red-500 focus:ring-red-500'
-                  : 'border-gray-300 dark:border-gray-600',
-                disabled && 'opacity-50 cursor-not-allowed bg-gray-100 dark:bg-gray-700',
+                  ? 'border-red-400 dark:border-red-500 focus:ring-red-500/20 focus:border-red-500'
+                  : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500',
+                disabled && 'opacity-50 cursor-not-allowed bg-gray-50 dark:bg-gray-700/50',
                 className
               )
             )}

@@ -137,6 +137,23 @@ export const Component: React.FC<ComponentProps> = ({ ... }) => {
 - 使用早期返回处理加载/空状态
 - 条件渲染使用三元表达式，避免深层嵌套
 
+### Barrel Export 规范（index.ts）
+
+文件夹组件使用 `index.ts` 进行统一导出：
+
+```typescript
+// ✅ 正确：显式指定 .tsx 扩展名
+export { Header } from './index.tsx';
+export type { HeaderProps } from './index.tsx';
+
+// ❌ 错误：from './index' 会导致循环定义 (ts(2303))
+export { Header } from './index';
+```
+
+**常见错误**：
+- `ts(2303)` 循环定义：不要使用 `from './index'`，必须用 `from './index.tsx'`
+- 模块解析失败：确保 `index.ts` 存在且导出路径正确
+
 ### 3D 组件开发规范
 
 ```typescript

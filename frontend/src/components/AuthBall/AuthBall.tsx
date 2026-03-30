@@ -24,6 +24,12 @@ interface AuthBallProps {
   onPasswordFocus?: (focused: boolean) => void;
 }
 
+/** WebGL 状态 */
+interface WebGLState {
+  isSupported: boolean;
+  contextLost: boolean;
+}
+
 /**
  * AuthBall 组件
  * 
@@ -40,6 +46,12 @@ export const AuthBall = forwardRef<HTMLDivElement, AuthBallProps>(
     // 鼠标位置状态
     const [mouseNorm, setMouseNorm] = useState({ x: 0, y: 0 });
     
+    // WebGL 状态
+    const [webglState, setWebglState] = useState<WebGLState>({
+      isSupported: true,
+      contextLost: false,
+    });
+
     // 内部情绪状态
     const { emotion, isEyeTrackingActive } = useAuthBallState({
       externalState: state,
@@ -75,6 +87,71 @@ export const AuthBall = forwardRef<HTMLDivElement, AuthBallProps>(
       onPasswordFocus?.(isPasswordFocused);
     }, [isPasswordFocused, onPasswordFocus]);
 
+    // Canvas 创建时的回调
+    const handleCreated = useCallback(({ gl }: { gl: WebGLRenderer }) => {
+      // 检查 WebGL 支持
+      const canvas = gl.domElement;
+      const context = canvas.getContext('webgl2') || canvas.getContext('webgl');
+      
+      if (!context) {
+        setWebglState({ isSupported: false, contextLost: false });
+        return;
+      }
+
+      // 监听 WebGL 上下文丢失
+      const handleContextLost = (event: Event) => {
+        event.preventDefault();
+        console.warn('[AuthBall] WebGL Context Lost');
+        setWebglState({ isSupported: true, contextLost: true });
+      };
+
+      // 监听 WebGL 上下文恢复
+      const handleContextRestored = () => {
+        console.log('[AuthBall] WebGL Context Restored');
+        setWebglState({ isSupported: true, contextLost: false });
+      };
+
+      canvas.addEventListener('webglcontextlost', handleContextLost);
+      canvas.addEventListener('webglcontextrestored', handleContextRestored);
+
+      // 设置抗锯齿
+      gl.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    }, []);
+
+    // WebGL 不支持或上下文丢失时的 Fallback
+    if (!webglState.isSupported) {
+      return (
+        <div
+          ref={ref}
+          className={twMerge(clsx('relative flex items-center justify-center', className))}
+          style={{ width: '100%', height: '100%' }}
+        >
+          <div className="text-center text-gray-400">
+            <div className="text-4xl mb-2">🎭</div>
+            <p className="text-sm">3D 表情球暂不可用</p>
+            <p className="text-xs mt-1">请启用 WebGL 以体验完整功能</p>
+          </div>
+        </div>
+      );
+    }
+
+    if (webglState.contextLost) {
+      return (
+        <div
+          ref={ref}
+          className={twMerge(clsx('relative flex items-center justify-center', className))}
+          style={{ width: '100%', height: '100%' }}
+        >
+          <div className="text-center text-gray-400">
+            <div className="text-4xl mb-2">🔄</div>
+            <p className="text-sm">正在重新连接 3D 场景...</p>
+            <p className="text-xs mt-1">刷新页面可解决此问题</p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         ref={ref}
@@ -86,9 +163,11 @@ export const AuthBall = forwardRef<HTMLDivElement, AuthBallProps>(
           gl={{
             antialias: true,
             alpha: true,
+            powerPreference: 'high-performance',
           }}
-          dpr={[1, 2]} // 限制像素比，性能优化
+          dpr={[1, 1.5]} // 降低像素比，减少 GPU 压力
           style={{ background: 'transparent' }}
+          onCreated={handleCreated}
         >
           <BallSceneWrapper
             emotion={emotion}
