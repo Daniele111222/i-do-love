@@ -16,9 +16,6 @@ export const RoutePath = {
 
 // 使用 lazy 导入提升性能
 const Home = lazy(() => import('@/pages/Home/index'));
-const Login = lazy(() => import('@/pages/login/index'));
-const Register = lazy(() => import('@/pages/Register/index'));
-const AuthBallTest = lazy(() => import('@/pages/AuthBallTest/index'));
 
 /**
  * 路由配置数组
@@ -29,18 +26,6 @@ export const routes: RouteObject[] = [
     path: RoutePath.HOME,
     element: <Home />,
   },
-  {
-    path: RoutePath.LOGIN,
-    element: <Login />,
-  },
-  {
-    path: RoutePath.REGISTER,
-    element: <Register />,
-  },
-  {
-    path: RoutePath.AUTH_BALL_TEST,
-    element: <AuthBallTest />,
-  },
 ];
 
 /**
@@ -48,7 +33,4 @@ export const routes: RouteObject[] = [
  */
 export const routeMeta: Record<string, { title: string; requiresAuth?: boolean }> = {
   [RoutePath.HOME]: { title: '首页' },
-  [RoutePath.LOGIN]: { title: '登录' },
-  [RoutePath.REGISTER]: { title: '注册' },
-  [RoutePath.AUTH_BALL_TEST]: { title: 'AuthBall 测试' },
 };

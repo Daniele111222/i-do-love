@@ -1,178 +1,113 @@
-"""
-认证服务层
-处理用户注册、登录、Token 管理等业务逻辑
-"""
+"""Authentication service."""
 
-from typing import Optional
-from sqlalchemy.ext.asyncio import AsyncSession
+from __future__ import annotations
+
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.security import (
     create_access_token,
     create_refresh_token,
+    decode_token,
     get_password_hash,
     verify_password,
-    decode_token,
 )
 from app.models.user import User
-from app.schemas.user import Token
+from app.schemas.user import CurrentUser, Token
+from app.services.exceptions import AuthenticationError, ConflictError, NotFoundError
 
 
 class AuthService:
-    """认证服务"""
+    """Business logic for registration, login, tokens, and current users."""
 
     def __init__(self, db: AsyncSession):
-        """初始化认证服务"""
         self.db = db
 
     async def register(
         self,
         email: str,
         password: str,
-        nickname: Optional[str] = None,
+        nickname: str | None = None,
     ) -> Token:
-        """
-        用户注册
+        existing_user = await self.get_user_by_email(email)
+        if existing_user is not None:
+            raise ConflictError("Email is already registered")
 
-        Args:
-            email: 邮箱
-            password: 密码
-            nickname: 昵称（可选）
-
-        Returns:
-            Token: JWT 令牌
-
-        Raises:
-            ValueError: 邮箱已存在
-        """
-        # 检查邮箱是否已注册
-        result = await self.db.execute(select(User).where(User.email == email))
-        existing_user = result.scalar_one_or_none()
-
-        if existing_user:
-            raise ValueError("该邮箱已被注册")
-
-        # 哈希密码
-        hashed_password = get_password_hash(password)
-
-        # 创建用户
-        new_user = User(
+        user = User(
             email=email,
             nickname=nickname,
-            hashed_password=hashed_password,
+            hashed_password=get_password_hash(password),
         )
 
-        self.db.add(new_user)
+        self.db.add(user)
         await self.db.commit()
-        await self.db.refresh(new_user)
+        await self.db.refresh(user)
 
-        # 生成 Token
-        return self._create_tokens(new_user)
+        return self._create_tokens(user)
 
     async def login(self, email: str, password: str) -> Token:
-        """
-        用户登录
+        user = await self.get_user_by_email(email)
 
-        Args:
-            email: 邮箱
-            password: 密码
+        if user is None or not verify_password(password, user.hashed_password):
+            raise AuthenticationError("Invalid email or password")
 
-        Returns:
-            Token: JWT 令牌
-
-        Raises:
-            ValueError: 凭证无效或用户未激活
-        """
-        # 查找用户
-        result = await self.db.execute(select(User).where(User.email == email))
-        user = result.scalar_one_or_none()
-
-        # 验证密码
-        if not user or not verify_password(password, user.hashed_password):
-            raise ValueError("邮箱或密码错误")
-
-        # 检查用户是否激活
         if not user.is_active:
-            raise ValueError("用户已被禁用")
+            raise AuthenticationError("User account is disabled")
 
-        # 生成 Token
         return self._create_tokens(user)
 
     async def refresh_token(self, refresh_token: str) -> Token:
-        """
-        刷新访问令牌
-
-        Args:
-            refresh_token: 刷新令牌
-
-        Returns:
-            Token: 新的 JWT 令牌
-
-        Raises:
-            ValueError: 无效的刷新令牌
-        """
-        # 解码刷新令牌
         payload = decode_token(refresh_token)
-
         if payload is None or payload.get("type") != "refresh":
-            raise ValueError("无效的刷新令牌")
+            raise AuthenticationError("Invalid refresh token")
 
-        user_id = payload.get("sub")
-        if user_id is None:
-            raise ValueError("无效的令牌载荷")
+        subject = payload.get("sub")
+        if subject is None:
+            raise AuthenticationError("Invalid token payload")
 
-        # 获取用户
-        result = await self.db.execute(select(User).where(User.id == int(user_id)))
-        user = result.scalar_one_or_none()
+        try:
+            user_id = int(subject)
+        except (TypeError, ValueError) as exc:
+            raise AuthenticationError("Invalid token subject") from exc
 
-        if not user or not user.is_active:
-            raise ValueError("用户不存在或已被禁用")
-
-        # 生成新 Token
+        user = await self.get_active_user_by_id(user_id)
         return self._create_tokens(user)
 
-    async def get_user_by_id(self, user_id: int) -> Optional[User]:
-        """
-        根据 ID 获取用户
+    async def get_current_user_from_token(self, token: str) -> CurrentUser:
+        payload = decode_token(token)
+        if payload is None or payload.get("type") != "access":
+            raise AuthenticationError("Invalid access token")
 
-        Args:
-            user_id: 用户 ID
+        subject = payload.get("sub")
+        if subject is None:
+            raise AuthenticationError("Invalid token payload")
 
-        Returns:
-            Optional[User]: 用户对象或 None
-        """
+        try:
+            user_id = int(subject)
+        except (TypeError, ValueError) as exc:
+            raise AuthenticationError("Invalid token subject") from exc
+
+        user = await self.get_active_user_by_id(user_id)
+        return CurrentUser(user_id=user.id, role=user.role)
+
+    async def get_active_user_by_id(self, user_id: int) -> User:
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("User was not found")
+        if not user.is_active:
+            raise AuthenticationError("User account is disabled")
+        return user
+
+    async def get_user_by_id(self, user_id: int) -> User | None:
         result = await self.db.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()
 
-    async def get_user_by_email(self, email: str) -> Optional[User]:
-        """
-        根据邮箱获取用户
-
-        Args:
-            email: 邮箱
-
-        Returns:
-            Optional[User]: 用户对象或 None
-        """
+    async def get_user_by_email(self, email: str) -> User | None:
         result = await self.db.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
 
     def _create_tokens(self, user: User) -> Token:
-        """
-        创建访问令牌和刷新令牌
-
-        Args:
-            user: 用户对象
-
-        Returns:
-            Token: JWT 令牌
-        """
-        # 访问令牌
-        access_token = create_access_token(data={"sub": str(user.id), "role": user.role})
-
-        # 刷新令牌
-        refresh_token = create_refresh_token(data={"sub": str(user.id)})
-
         return Token(
-            access_token=access_token,
-            refresh_token=refresh_token,
+            access_token=create_access_token(data={"sub": str(user.id), "role": user.role}),
+            refresh_token=create_refresh_token(data={"sub": str(user.id)}),
         )

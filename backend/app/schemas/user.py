@@ -1,36 +1,34 @@
-"""用户相关的 Pydantic 数据校验模式。"""
+"""User and authentication schemas."""
+
+from __future__ import annotations
 
 from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
-# ============================================
-# 用户基础模式
-# ============================================
-
-
 class UserBase(BaseModel):
-    """用户基础模式，包含公共字段。"""
+    """Shared user fields."""
 
     email: EmailStr
     nickname: str | None = None
 
 
 class UserCreate(UserBase):
-    """创建新用户的请求模式。"""
+    """Request schema for creating users."""
 
     password: str = Field(..., min_length=8, max_length=128)
 
 
 class UserUpdate(BaseModel):
-    """更新用户信息的请求模式。"""
+    """Request schema for updating users."""
 
     nickname: str | None = None
     password: str | None = Field(None, min_length=8, max_length=128)
 
 
 class UserResponse(UserBase):
-    """用户响应模式（不含敏感数据）。"""
+    """User response schema without sensitive fields."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -41,13 +39,8 @@ class UserResponse(UserBase):
     updated_at: datetime
 
 
-# ============================================
-# 认证相关模式
-# ============================================
-
-
 class Token(BaseModel):
-    """JWT 令牌响应模式。"""
+    """JWT token response."""
 
     access_token: str
     refresh_token: str
@@ -55,22 +48,29 @@ class Token(BaseModel):
 
 
 class TokenPayload(BaseModel):
-    """JWT 令牌载荷模式。"""
+    """JWT token payload."""
 
     sub: str | None = None
     exp: datetime | None = None
     type: str | None = None
 
 
+class CurrentUser(BaseModel):
+    """Authenticated user context passed through dependencies."""
+
+    user_id: int
+    role: str
+
+
 class LoginRequest(BaseModel):
-    """登录请求模式。"""
+    """Login request schema."""
 
     email: EmailStr
     password: str
 
 
 class RegisterRequest(BaseModel):
-    """注册请求模式。"""
+    """Registration request schema."""
 
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
@@ -78,6 +78,6 @@ class RegisterRequest(BaseModel):
 
 
 class RefreshTokenRequest(BaseModel):
-    """刷新令牌请求模式。"""
+    """Refresh token request schema."""
 
     refresh_token: str
