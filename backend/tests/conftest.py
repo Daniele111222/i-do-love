@@ -9,9 +9,11 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1 import auth
 from app.database import get_db
 from app.main import app
 from app.models import Base
+from app.services.rate_limit_service import RateLimitDecision
 
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -52,8 +54,15 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
 
     app.dependency_overrides[get_db] = override_get_db
 
+    async def allow_rate_limit(key: str, limit: int, window_seconds: int) -> RateLimitDecision:
+        return RateLimitDecision(allowed=True, retry_after_seconds=window_seconds)
+
+    original_check_rate_limit = auth.check_rate_limit
+    auth.check_rate_limit = allow_rate_limit
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
 
+    auth.check_rate_limit = original_check_rate_limit
     app.dependency_overrides.clear()

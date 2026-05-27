@@ -60,6 +60,7 @@ class CurrentUser(BaseModel):
 
     user_id: int
     role: str
+    session_id: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -81,3 +82,24 @@ class RefreshTokenRequest(BaseModel):
     """Refresh token request schema."""
 
     refresh_token: str
+
+
+class RefreshTokenSessionResponse(BaseModel):
+    """Refresh token session response without token secrets."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    ip_address: str | None
+    user_agent: str | None
+    is_current: bool
+    is_revoked: bool
+
+
+class RefreshTokenSessionListResponse(BaseModel):
+    """List of refresh token sessions for the current user."""
+
+    sessions: list[RefreshTokenSessionResponse]

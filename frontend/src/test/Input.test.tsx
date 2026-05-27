@@ -1,24 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { Input } from '@/components/common/Input';
 import userEvent from '@testing-library/user-event';
+import { Input } from '@/components/ui/input';
 
 describe('Input', () => {
-  it('renders with label', () => {
-    render(<Input label="邮箱" />);
-    expect(screen.getByLabelText('邮箱')).toBeInTheDocument();
-  });
-
-  it('displays error message', () => {
-    render(<Input label="邮箱" error="邮箱格式不正确" />);
-    expect(screen.getByText('邮箱格式不正确')).toBeInTheDocument();
+  it('renders with aria label', () => {
+    render(<Input aria-label="搜索" />);
+    expect(screen.getByLabelText('搜索')).toBeInTheDocument();
   });
 
   it('accepts text input', async () => {
     const user = userEvent.setup();
-    render(<Input label="邮箱" />);
-    const input = screen.getByLabelText('邮箱');
-    await user.type(input, 'test@example.com');
-    expect(input).toHaveValue('test@example.com');
+    render(<Input aria-label="关键词" />);
+
+    const input = screen.getByLabelText('关键词');
+    await user.type(input, 'ai news');
+
+    expect(input).toHaveValue('ai news');
   });
 });

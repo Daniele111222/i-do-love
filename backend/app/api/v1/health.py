@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.database import get_db
+from app.services.readiness_service import DependencyReadiness, get_readiness, is_ready
 
 router = APIRouter()
 
@@ -37,6 +38,21 @@ class DependencyHealthResponse(BaseModel):
 
     status: str
     dependency: str
+
+
+class ReadinessDependencyResponse(BaseModel):
+    """Readiness status for one dependency."""
+
+    status: str
+    required: bool
+    message: str | None = None
+
+
+class ReadinessResponse(BaseModel):
+    """Readiness check response."""
+
+    status: str
+    dependencies: dict[str, ReadinessDependencyResponse]
 
 
 @router.get(
@@ -88,3 +104,40 @@ async def health_check_redis() -> DependencyHealthResponse:
         await _maybe_await(client.aclose())
 
     return DependencyHealthResponse(status="healthy", dependency="redis")
+
+
+@router.get(
+    "/readyz",
+    response_model=ReadinessResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def readiness_check() -> ReadinessResponse:
+    """Check whether the service is ready to receive production traffic."""
+    dependencies = await get_readiness()
+    response = ReadinessResponse(
+        status="ready" if is_ready(dependencies) else "not_ready",
+        dependencies=_readiness_dependencies_to_response(dependencies),
+    )
+    if response.status != "ready":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "message": "Service is not ready",
+                "details": response.model_dump(),
+            },
+        )
+
+    return response
+
+
+def _readiness_dependencies_to_response(
+    dependencies: list[DependencyReadiness],
+) -> dict[str, ReadinessDependencyResponse]:
+    return {
+        dependency.name: ReadinessDependencyResponse(
+            status=dependency.status,
+            required=dependency.required,
+            message=dependency.message,
+        )
+        for dependency in dependencies
+    }

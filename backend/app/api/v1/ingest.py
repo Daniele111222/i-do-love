@@ -5,10 +5,20 @@ from __future__ import annotations
 import hashlib
 import hmac
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.database import get_db
+from app.schemas.ingest import (
+    FeedIngestResponse,
+    IngestStatusResponse,
+    WebhookPayload,
+    WebhookResponse,
+)
+from app.services.ingest_service import IngestService
 
 router = APIRouter()
 
@@ -23,34 +33,6 @@ def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> boo
     return hmac.compare_digest(f"sha256={expected}", signature)
 
 
-class WebhookPayload(BaseModel):
-    """OpenClaw webhook payload."""
-
-    title: str = Field(..., min_length=1, max_length=500)
-    content: str
-    source_url: str | None = None
-    source_name: str | None = None
-    author: str | None = None
-    published_at: str | None = None
-    tags: list[str] = Field(default_factory=list)
-
-
-class WebhookResponse(BaseModel):
-    """Webhook acknowledgement response."""
-
-    status: str
-    id: int | None = None
-    message: str
-
-
-class IngestStatusResponse(BaseModel):
-    """Ingestion status response."""
-
-    total_processed: int
-    total_success: int
-    total_failed: int
-
-
 @router.post(
     "/webhook",
     response_model=WebhookResponse,
@@ -59,6 +41,7 @@ class IngestStatusResponse(BaseModel):
 async def receive_webhook(
     request: Request,
     payload: WebhookPayload,
+    db: Annotated[AsyncSession, Depends(get_db)],
     x_signature: str | None = Header(None, alias="X-Signature"),
 ) -> WebhookResponse:
     """Receive content from OpenClaw."""
@@ -75,28 +58,39 @@ async def receive_webhook(
             detail="Invalid webhook signature",
         )
 
+    article = await IngestService(db).ingest_webhook(payload)
     return WebhookResponse(
         status="accepted",
-        id=None,
+        id=article.id,
         message="Content accepted for processing",
     )
 
 
 @router.post(
     "/feed",
+    response_model=FeedIngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def ingest_feed(
     feed_url: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
     source_name: str | None = None,
-) -> dict[str, str | None]:
+) -> FeedIngestResponse:
     """Queue an RSS, Atom, or JSON feed for ingestion."""
-    return {
-        "status": "queued",
-        "message": "Feed ingestion has been queued",
-        "feed_url": feed_url,
-        "source_name": source_name,
-    }
+    job = await IngestService(db).queue_feed(feed_url=feed_url, source_name=source_name)
+    if job.source_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Feed ingestion job is missing source",
+        )
+    return FeedIngestResponse(
+        status="queued",
+        message="Feed ingestion has been queued",
+        feed_url=feed_url,
+        source_name=source_name,
+        source_id=job.source_id,
+        job_id=job.id,
+    )
 
 
 @router.get(
@@ -104,10 +98,8 @@ async def ingest_feed(
     response_model=IngestStatusResponse,
     status_code=status.HTTP_200_OK,
 )
-async def get_ingest_status() -> IngestStatusResponse:
+async def get_ingest_status(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> IngestStatusResponse:
     """Return content ingestion status and statistics."""
-    return IngestStatusResponse(
-        total_processed=0,
-        total_success=0,
-        total_failed=0,
-    )
+    return IngestStatusResponse(**await IngestService(db).get_status())

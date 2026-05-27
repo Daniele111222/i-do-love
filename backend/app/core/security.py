@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -46,6 +48,7 @@ def create_refresh_token(
     )
     to_encode = data.copy()
     to_encode.update({"exp": expire, "type": "refresh", "iat": datetime.now(UTC)})
+    to_encode.setdefault("jti", uuid4().hex)
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
@@ -55,3 +58,8 @@ def decode_token(token: str) -> dict[str, Any] | None:
         return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
     except JWTError:
         return None
+
+
+def hash_token(token: str) -> str:
+    """Return a stable SHA-256 hash for token persistence."""
+    return hashlib.sha256(token.encode()).hexdigest()
