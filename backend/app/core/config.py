@@ -42,6 +42,8 @@ class Settings(BaseSettings):
 
     # OpenAI 配置
     OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_HEALTH_TIMEOUT_SECONDS: float = 2.0
 
     # Qdrant 配置 (Phase 3+)
     QDRANT_URL: str = ""

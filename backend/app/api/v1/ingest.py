@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.database import get_db
 from app.schemas.ingest import (
     FeedIngestResponse,
+    IngestQueueStatusResponse,
     IngestStatusResponse,
     WebhookPayload,
     WebhookResponse,
@@ -103,3 +104,15 @@ async def get_ingest_status(
 ) -> IngestStatusResponse:
     """Return content ingestion status and statistics."""
     return IngestStatusResponse(**await IngestService(db).get_status())
+
+
+@router.get(
+    "/queue",
+    response_model=IngestQueueStatusResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_ingest_queue_status(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> IngestQueueStatusResponse:
+    """Return feed worker queue status and backlog statistics."""
+    return IngestQueueStatusResponse(**await IngestService(db).get_queue_status())

@@ -88,11 +88,27 @@ async def check_qdrant() -> DependencyReadiness:
 
 
 async def check_openai() -> DependencyReadiness:
-    """Check OpenAI configuration without making a paid network request."""
+    """Check OpenAI availability with a lightweight models-list request."""
     if not settings.OPENAI_API_KEY:
         return DependencyReadiness(name="openai", status="skipped", required=False)
 
-    return DependencyReadiness(name="openai", status="configured", required=False)
+    url = settings.OPENAI_BASE_URL.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=settings.OPENAI_HEALTH_TIMEOUT_SECONDS) as client:
+            response = await client.get(
+                f"{url}/models",
+                headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}"},
+            )
+            response.raise_for_status()
+    except Exception as exc:
+        return DependencyReadiness(
+            name="openai",
+            status="unavailable",
+            required=False,
+            message=str(exc),
+        )
+
+    return DependencyReadiness(name="openai", status="ready", required=False)
 
 
 async def get_readiness(

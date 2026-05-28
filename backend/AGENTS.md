@@ -208,6 +208,14 @@ async def login(
 - `ingest_jobs.status` 当前使用 `"success"` 记录成功接收；后续异步解析失败必须写入失败 job 和 `error_message`。
 - `POST /api/v1/ingest/feed` 必须创建持久化 `pending` job；禁止只返回内存占位响应。
 - `GET /api/v1/ingest/status` 必须基于 `ingest_jobs` 数据库统计；禁止返回硬编码 0。
+- `GET /api/v1/ingest/queue` 必须暴露 feed worker backlog；字段至少包含 `pending`、`retrying`、`retry_due`、`processing`、`stale_processing`、`failed`、`claimable`。
+- feed worker 必须通过 `IngestService.process_due_feed_jobs()` 批量领取 `pending`、到期的 `retrying` 或 stale `processing` job；单个 job 的实际处理必须复用 `process_feed_job()`。
+- RSS/Atom 解析失败、网络失败和未知 feed 格式都必须落到 job 状态中；禁止吞掉异常后仍显示成功。
+- feed worker 失败必须递增 `attempt_count` 并写入 `error_message`；未耗尽重试次数时标记 `retrying` 并设置 `next_retry_at`，耗尽后标记 `failed` 并清空 `next_retry_at`。
+- 调度器只能领取 `pending` job、`next_retry_at <= now` 的 `retrying` job，或 `locked_at` 超过超时时间的 `processing` job；禁止重复执行尚未到期或仍被有效 worker 锁住的任务。
+- claim 阶段必须把 job 标记为 `processing` 并写入 `locked_at`；成功、retrying、failed 结束时必须清空 `locked_at`，否则崩溃恢复和并发 worker 会误判任务状态。
+- PostgreSQL 生产路径领取 job 必须使用 `FOR UPDATE SKIP LOCKED`；SQLite 仅作为测试兼容路径，不得用 SQLite 行为证明多 worker 并发安全。
+- 后台任务入口必须保持薄封装；`scripts/run_feed_worker.py` 只负责 session、参数和输出，不得承载 feed 解析、状态流转或数据库编排。
 
 ### 配置
 - 新配置字段先加到 `Settings`，再同步 `.env.example`，最后更新相关测试或启动说明。
@@ -215,6 +223,7 @@ async def login(
 - `APP_ENV` 当前支持 `development`、`test`、`staging`、`production`；生产环境必须使用非默认密钥。
 - `LOG_LEVEL` 控制 root logger 级别；生产默认推荐 `INFO`，不要通过代码硬编码环境差异。
 - `QDRANT_URL` 和 `OPENAI_API_KEY` 当前属于 Phase 3+ 可选依赖；未配置时 readiness 必须标记为 `skipped`，不要阻止基础 API 发布。
+- `OPENAI_BASE_URL` 和 `OPENAI_HEALTH_TIMEOUT_SECONDS` 控制 OpenAI readiness 轻量探测；变更时必须同步测试，避免健康检查长期阻塞。
 - `AUTH_LOGIN_RATE_LIMIT`、`AUTH_REFRESH_RATE_LIMIT`、`AUTH_RATE_LIMIT_WINDOW_SECONDS` 控制认证限流；变更默认值必须同步风险评估和测试。
 
 ### 错误响应与请求追踪
@@ -224,13 +233,16 @@ async def login(
 - 每个请求完成时必须通过 `app.request` logger 输出 `request_completed`，并带上 `request_id`、`method`、`path`、`status_code`、`duration_ms`。
 - 新增全局异常处理时，不要绕过 `app/core/errors.py`；否则客户端会收到不一致的错误结构。
 - `APP_ENV=production` 时必须使用 `JsonLogFormatter` 输出单行 JSON；字段至少包含 `timestamp`、`level`、`logger`、`message`，并保留 `extra` 中的结构化字段。
+- feed worker 每批处理完成必须通过 `app.worker` logger 输出 `feed_worker_batch_completed`，并带上 `claimed`、`succeeded`、`failed`、`processed_items`；否则无法建立失败率告警和吞吐趋势。
 
 ### 健康检查与部署探针
 - `/api/v1/health` 只表示 API 进程可响应，不代表服务可接流量。
 - `/api/v1/health/db` 和 `/api/v1/health/redis` 是单项依赖探测，失败必须返回 `503`。
 - `/api/v1/readyz` 是部署就绪探针，必须聚合 database、redis、qdrant、openai 的状态。
 - database 和 redis 是必需依赖；任何一个 `unavailable` 都必须让 `/readyz` 返回 `503`。
-- qdrant 和 openai 在 RAG 未落地前是可选依赖；未配置返回 `skipped`，配置后执行轻量检查或配置检查。
+- qdrant 和 openai 在 RAG 未落地前是可选依赖；未配置返回 `skipped`。
+- OpenAI 配置后必须用 `GET {OPENAI_BASE_URL}/models` 做轻量 readiness 探测，并设置 Bearer token 和超时。
+- `/api/v1/ingest/queue` 是运维状态接口，不等同 readiness；它用于仪表盘和排障，不能因为有 backlog 就返回 5xx。
 
 ## 测试与验证机制
 
@@ -239,12 +251,15 @@ async def login(
 - [ ] **测试**：`uv run pytest`
 - [ ] **Lint**：`uv run ruff check .`
 - [ ] **类型检查**：`uv run mypy app`
+- [ ] **脚本类型检查**：新增或修改 `scripts/` 时运行 `uv run mypy scripts`
+- [ ] **PostgreSQL 集成测试**：涉及并发领取、锁、事务或 PostgreSQL 专有 SQL 时，设置 `POSTGRES_TEST_DATABASE_URL` 并运行对应测试。
 - [ ] **接口契约**：新增或变更 `/api/v1` 接口时，确认 `response_model`、schema、测试同步更新。
 - [ ] **配置同步**：新增配置时，确认 `app/core/config.py` 与 `.env.example` 一致。
 - [ ] **错误契约**：确认新增错误路径仍返回统一 error envelope 和 `X-Request-ID`。
 - [ ] **请求日志**：确认新增中间件或异常路径不会丢失 `app.request` 请求完成日志。
-- [ ] **日志格式**：确认生产日志仍为单行 JSON，并保留 request/audit extra 字段。
+- [ ] **日志格式**：确认生产日志仍为单行 JSON，并保留 request/audit/worker extra 字段。
 - [ ] **部署探针**：确认新增外部依赖后同步 `/api/v1/readyz`，并区分 required / optional。
+- [ ] **队列状态**：新增或修改 worker 状态时，同步 `/api/v1/ingest/queue` schema、service 和测试。
 - [ ] **认证限流**：确认登录和 refresh token 仍先经过 Redis-backed rate limiter，并覆盖 `429` / `Retry-After` 测试。
 - [ ] **会话审计**：确认 refresh token session 创建时写入 IP/User-Agent，且会话列表不暴露 `token_id`、`token_hash`、refresh token 明文。
 
@@ -271,6 +286,7 @@ async def login(
 - API 成功路径和失败路径是否都有测试？
 - 测试是否通过 FastAPI dependency override 使用测试数据库？
 - 需要 Redis / PostgreSQL 真实依赖的测试是否明确标记或隔离？
+- PostgreSQL 并发语义是否有真实数据库集成测试；`tests/test_postgres_worker_claims.py` 默认跳过，配置 `POSTGRES_TEST_DATABASE_URL` 后验证多 worker claim 互斥。
 
 ## 公共工具与约定
 
@@ -279,21 +295,22 @@ async def login(
 - **请求追踪与日志**：统一使用 `app/core/middleware.py` 和 `app/core/logging.py`；不要在业务层手动生成独立请求 ID。
 - **日志配置**：统一使用 `app.core.logging.configure_logging()`；不要在业务模块重复设置 root handler。
 - **审计日志**：认证与账号安全事件统一使用 `app.core.logging.audit_logger`；事件名保持稳定，便于后续接入 SIEM 或日志告警。
+- **Worker 日志**：后台任务统一使用 `app.core.logging.worker_logger`；事件名和统计字段保持稳定，便于后续接入 metrics 或日志告警。
 - **限流服务**：统一使用 `app/services/rate_limit_service.py`；不要在路由里直接操作 Redis 计数。
 - **数据库会话**：统一使用 `app/database.py` 的 `get_db` 和 `AsyncSessionLocal`。
 - **认证依赖**：统一使用 `app/dependencies.py` 的 `get_current_user` / `get_current_active_user`。
 - **密码与 JWT**：统一使用 `app/core/security.py`，禁止在路由或服务中重复实现加密逻辑。
 - **Refresh token session**：统一使用 `app/models/refresh_token_session.py`；新增认证会话能力必须同步迁移和测试。
 - **Ingestion**：统一使用 `app/services/ingest_service.py` 和 `app/schemas/ingest.py`；Source/Article/IngestJob 模型必须通过 Alembic 迁移演进。
+- **Feed worker**：统一使用 `scripts/run_feed_worker.py` 作为单批次任务入口；部署层可用 cron、容器任务或进程管理器调度该脚本。
 - **建表辅助**：`scripts/create_tables.py` 只用于早期本地开发；生产迁移方案落地后应改用 Alembic。
 
 ## 已知后续事项
 
-- 建立 Alembic 迁移目录，并定义本地、测试、部署环境的迁移命令。
-- 为 feed ingestion 增加真实解析 worker 和失败重试；当前 feed 请求已支持 Source/IngestJob 持久化 pending 队列记录，webhook 已支持 Article 入库和 `source_url` 幂等写入。
+- 定义本地、测试、部署环境的 Alembic 迁移命令；迁移目录和 upgrade-head 测试已建立。
+- 为 feed ingestion 接入实际部署层调度；当前 feed 请求已支持 Source/IngestJob 持久化 pending 队列记录，`process_due_feed_jobs()` 和 `scripts/run_feed_worker.py` 已支持单批次后台处理、PostgreSQL `FOR UPDATE SKIP LOCKED` claim、stale lock 恢复、RSS/Atom 解析、Article upsert、success/retrying/failed 状态记录、到期重试查询和 `/api/v1/ingest/queue` backlog 状态接口。
 - 为 refresh token session 增加设备指纹和审计查询；当前已支持持久化、轮换、单 token 登出撤销、会话列表、批量撤销、IP 和 User-Agent。
-- 将 `app.request` 与 `app.audit` 接入实际部署环境的日志采集和告警；当前已建立 logger、结构化 extra 字段和生产 JSON formatter。
-- 为 OpenAI 落地真实轻量健康检查和超时策略；当前 readiness 只确认 key 已配置，避免测试或健康探针产生付费调用。
+- 将 `app.request`、`app.audit` 与 `app.worker` 接入实际部署环境的日志采集和告警；当前已建立 logger、结构化 extra 字段和生产 JSON formatter。
 - 为限流策略补充更细粒度的账号/IP 组合策略、灰名单或验证码联动；当前已覆盖登录和 refresh token 的固定窗口基础限流。
 
 ## 本文档的维护规则
@@ -304,4 +321,4 @@ async def login(
 - 新增公共组件、工具、目录或跨模块约定时，评估是否需要同步更新本文档。
 - 不维护完整版本号和完整文件清单；这些内容以 `pyproject.toml`、`uv.lock`、`rg --files backend` 的当前结果为准。
 
-<!-- last-verified: 2026-05-27 -->
+<!-- last-verified: 2026-05-28 -->

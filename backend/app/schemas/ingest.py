@@ -44,3 +44,15 @@ class IngestStatusResponse(BaseModel):
     total_processed: int
     total_success: int
     total_failed: int
+
+
+class IngestQueueStatusResponse(BaseModel):
+    """Ingestion worker queue status response."""
+
+    pending: int
+    retrying: int
+    retry_due: int
+    processing: int
+    stale_processing: int
+    failed: int
+    claimable: int

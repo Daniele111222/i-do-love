@@ -76,3 +76,4 @@ def configure_logging(app_env: str, log_level: str) -> None:
 
 request_logger = logging.getLogger("app.request")
 audit_logger = logging.getLogger("app.audit")
+worker_logger = logging.getLogger("app.worker")

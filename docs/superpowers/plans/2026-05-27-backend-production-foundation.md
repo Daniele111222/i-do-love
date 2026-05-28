@@ -557,10 +557,350 @@ uv run mypy app
 
 Observed: passed after guarding the feed job source-id invariant for mypy strict mode.
 
+## Task 16: OpenAI Readiness Probe
+
+**Files:**
+- Modify: `backend/app/core/config.py`
+- Modify: `backend/app/services/readiness_service.py`
+- Create: `backend/tests/test_readiness.py`
+- Modify: `backend/.env.example`
+- Modify: `backend/AGENTS.md`
+
+- [x] **Step 1: Write failing OpenAI readiness tests**
+
+Verify that configured OpenAI readiness performs a lightweight authenticated `GET /models` request and reports `unavailable` on HTTP errors without making real network calls in tests.
+
+- [x] **Step 2: Run tests to verify RED**
+
+Run: `uv run pytest tests/test_readiness.py -q`
+
+Observed: failed because `OPENAI_BASE_URL` did not exist and readiness only checked whether an API key was configured.
+
+- [x] **Step 3: Implement lightweight OpenAI readiness**
+
+Add `OPENAI_BASE_URL`, `OPENAI_HEALTH_TIMEOUT_SECONDS`, and `check_openai()` HTTP probing through `httpx.AsyncClient`.
+
+- [x] **Step 4: Verify GREEN**
+
+Run:
+
+```bash
+uv run pytest tests/test_health.py tests/test_error_handling.py tests/test_readiness.py -q
+uv run ruff check .
+uv run mypy app
+```
+
+Observed: passed.
+
+## Task 17: Feed Worker Processing
+
+**Files:**
+- Modify: `backend/app/services/ingest_service.py`
+- Modify: `backend/tests/test_ingest.py`
+- Modify: `backend/AGENTS.md`
+
+- [x] **Step 1: Write failing feed worker tests**
+
+Verify that `IngestService.process_feed_job()` fetches RSS, parses feed items, upserts articles, marks jobs `success`, and records `failed` plus `error_message` when fetching fails.
+
+- [x] **Step 2: Run tests to verify RED**
+
+Run: `uv run pytest tests/test_ingest.py::test_process_feed_job_ingests_rss_items tests/test_ingest.py::test_process_feed_job_marks_failed_when_fetch_fails -q`
+
+Observed: failed because `process_feed_job()` and `_fetch_feed()` did not exist.
+
+- [x] **Step 3: Implement feed worker processing**
+
+Add RSS/Atom parsing with the Python standard library, HTTP fetching with `httpx`, article upsert by item link, and success/failed job state updates.
+
+- [x] **Step 4: Verify GREEN**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py -q
+uv run ruff check .
+uv run mypy app
+```
+
+Observed: passed.
+
+## Task 18: Feed Retry Strategy
+
+**Files:**
+- Modify: `backend/app/models/ingest_job.py`
+- Modify: `backend/app/services/ingest_service.py`
+- Create: `backend/alembic/versions/202605270005_add_ingest_job_retry_fields.py`
+- Modify: `backend/tests/test_ingest.py`
+- Modify: `backend/tests/test_migrations.py`
+- Modify: `backend/AGENTS.md`
+
+- [x] **Step 1: Write failing retry tests**
+
+Verify that failed feed jobs move to `retrying`, increment `attempt_count`, set `next_retry_at`, become `failed` after max attempts, and that scheduling only returns `pending` plus due `retrying` jobs.
+
+- [x] **Step 2: Run tests to verify RED**
+
+Run: `uv run pytest tests/test_ingest.py::test_process_feed_job_marks_failed_when_fetch_fails tests/test_ingest.py::test_process_feed_job_marks_failed_after_max_attempts tests/test_ingest.py::test_get_due_feed_jobs_returns_pending_and_due_retry_jobs tests/test_migrations.py -q`
+
+Observed: failed because failed feed jobs were marked permanently failed immediately, retry fields did not exist, and due-job lookup did not exist.
+
+- [x] **Step 3: Implement retry fields and due-job lookup**
+
+Add `attempt_count` and `next_retry_at` to `IngestJob`, add an Alembic migration, update `process_feed_job()` to set `retrying` until attempts are exhausted, and add `get_due_feed_jobs()`.
+
+- [x] **Step 4: Verify GREEN**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py tests/test_migrations.py -q
+uv run ruff check .
+uv run mypy app
+```
+
+Observed: passed after making the migration SQLite-compatible.
+
+## Task 19: Feed Worker Batch Entrypoint
+
+**Files:**
+- Modify: `backend/app/services/ingest_service.py`
+- Create: `backend/scripts/__init__.py`
+- Create: `backend/scripts/run_feed_worker.py`
+- Create: `backend/tests/test_feed_worker_script.py`
+- Modify: `backend/tests/test_ingest.py`
+- Modify: `backend/AGENTS.md`
+
+- [x] **Step 1: Write failing batch worker tests**
+
+Verify that `process_due_feed_jobs()` processes only pending and due retry jobs, reports batch counts, and that the worker script delegates to the service layer.
+
+- [x] **Step 2: Run tests to verify RED**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py::test_process_due_feed_jobs_processes_pending_and_due_retry_jobs -q
+uv run pytest tests/test_feed_worker_script.py -q
+```
+
+Observed: failed because `IngestService.process_due_feed_jobs()` and `scripts/run_feed_worker.py` did not exist.
+
+- [x] **Step 3: Implement batch service and script**
+
+Add `process_due_feed_jobs(limit=...)`, add `scripts/run_feed_worker.py` as a thin single-batch entrypoint, and add `scripts/__init__.py` for stable imports.
+
+- [x] **Step 4: Verify GREEN**
+
+Run:
+
+```bash
+uv run pytest tests/test_feed_worker_script.py tests/test_ingest.py -q
+uv run ruff check .
+uv run mypy app tests/test_feed_worker_script.py
+uv run mypy scripts
+```
+
+Observed: passed.
+
+## Task 20: Feed Worker Claim Locking
+
+**Files:**
+- Modify: `backend/app/models/ingest_job.py`
+- Modify: `backend/alembic/versions/202605270005_add_ingest_job_retry_fields.py`
+- Modify: `backend/app/services/ingest_service.py`
+- Modify: `backend/tests/test_ingest.py`
+- Modify: `backend/tests/test_migrations.py`
+- Modify: `backend/AGENTS.md`
+
+- [x] **Step 1: Write failing claim/lock tests**
+
+Verify that due feed jobs are claimed into `processing`, locked jobs disappear from due lookups, stale `processing` jobs can be recovered, and completed jobs clear `locked_at`.
+
+- [x] **Step 2: Run tests to verify RED**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py::test_claim_due_feed_jobs_marks_jobs_processing tests/test_ingest.py::test_get_due_feed_jobs_returns_stale_processing_jobs -q
+```
+
+Observed: failed because `claim_due_feed_jobs()` did not exist and `get_due_feed_jobs()` had no stale-lock handling.
+
+- [x] **Step 3: Implement claim state and stale-lock recovery**
+
+Add `locked_at` to `IngestJob` and the Alembic migration, add `claim_due_feed_jobs()`, include stale `processing` jobs in due lookup, and clear `locked_at` on success, retry, or terminal failure.
+
+- [x] **Step 4: Verify GREEN**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py::test_claim_due_feed_jobs_marks_jobs_processing tests/test_ingest.py::test_get_due_feed_jobs_returns_stale_processing_jobs tests/test_ingest.py::test_process_due_feed_jobs_processes_pending_and_due_retry_jobs tests/test_migrations.py -q
+uv run pytest tests/test_ingest.py tests/test_feed_worker_script.py tests/test_migrations.py -q
+uv run ruff check .
+uv run mypy app scripts tests/test_ingest.py tests/test_feed_worker_script.py
+```
+
+Observed: passed.
+
+## Task 21: PostgreSQL Skip-Locked Claim Query
+
+**Files:**
+- Modify: `backend/app/services/ingest_service.py`
+- Modify: `backend/tests/test_ingest.py`
+- Modify: `backend/AGENTS.md`
+
+- [x] **Step 1: Write failing SQL compilation test**
+
+Verify that the PostgreSQL due-job claim query compiles with `FOR UPDATE SKIP LOCKED`.
+
+- [x] **Step 2: Run test to verify RED**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py::test_claim_due_feed_jobs_query_uses_postgresql_skip_locked -q
+```
+
+Observed: failed because the due-job query was not exposed for verification and claim did not request row-level skip-locked semantics.
+
+- [x] **Step 3: Implement skip-locked query construction**
+
+Extract `build_due_feed_jobs_query()` and make `claim_due_feed_jobs()` use `with_for_update(skip_locked=True)` when the bound database dialect is PostgreSQL.
+
+- [x] **Step 4: Verify GREEN**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py tests/test_feed_worker_script.py tests/test_migrations.py -q
+uv run ruff check .
+uv run mypy app scripts tests/test_ingest.py tests/test_feed_worker_script.py
+```
+
+Observed: passed.
+
+## Task 22: PostgreSQL Worker Claim Integration Test
+
+**Files:**
+- Create: `backend/tests/test_postgres_worker_claims.py`
+- Modify: `backend/AGENTS.md`
+
+- [x] **Step 1: Write optional PostgreSQL integration test**
+
+Verify that two worker sessions claiming one job each from the same PostgreSQL database receive distinct jobs. The test must be skipped unless `POSTGRES_TEST_DATABASE_URL` is configured.
+
+- [x] **Step 2: Run test to verify skip behavior without PostgreSQL**
+
+Run:
+
+```bash
+uv run pytest tests/test_postgres_worker_claims.py -q
+```
+
+Observed: skipped because `POSTGRES_TEST_DATABASE_URL` was not configured.
+
+- [x] **Step 3: Implement integration test support**
+
+Create a test that builds tables in the configured PostgreSQL database, inserts two pending feed jobs, claims from two independent async sessions, asserts distinct job IDs, and drops tables afterward.
+
+- [ ] **Step 4: Verify against real PostgreSQL**
+
+Run after starting local PostgreSQL, for example via `docker-compose up -d postgres`:
+
+```bash
+$env:POSTGRES_TEST_DATABASE_URL="postgresql+asyncpg://ai_news:ai_news_secret@localhost:5432/ai_news"
+uv run pytest tests/test_postgres_worker_claims.py -q
+```
+
+Expected: pass.
+
+## Task 23: Worker Batch Observability
+
+**Files:**
+- Modify: `backend/app/core/logging.py`
+- Modify: `backend/app/services/ingest_service.py`
+- Modify: `backend/tests/test_observability.py`
+- Modify: `backend/AGENTS.md`
+
+- [x] **Step 1: Write failing worker log tests**
+
+Verify that `IngestService.process_due_feed_jobs()` logs `feed_worker_batch_completed` to `app.worker` with `claimed`, `succeeded`, `failed`, and `processed_items` counts for empty and failed batches.
+
+- [x] **Step 2: Run tests to verify RED**
+
+Run:
+
+```bash
+uv run pytest tests/test_observability.py::test_feed_worker_batch_log_contains_batch_counts -q
+```
+
+Observed: failed because no `app.worker` event was emitted.
+
+- [x] **Step 3: Implement worker logger event**
+
+Add `worker_logger` in `app/core/logging.py` and emit `feed_worker_batch_completed` after each batch with stable count fields.
+
+- [x] **Step 4: Verify GREEN**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py tests/test_feed_worker_script.py tests/test_observability.py tests/test_logging.py -q
+uv run ruff check .
+uv run mypy app scripts tests/test_observability.py tests/test_ingest.py tests/test_feed_worker_script.py
+```
+
+Observed: passed.
+
+## Task 24: Documentation and Full Verification
+
+## Task 24: Ingestion Queue Status Endpoint
+
+**Files:**
+- Modify: `backend/app/api/v1/ingest.py`
+- Modify: `backend/app/schemas/ingest.py`
+- Modify: `backend/app/services/ingest_service.py`
+- Modify: `backend/tests/test_ingest.py`
+- Modify: `backend/AGENTS.md`
+
+- [x] **Step 1: Write failing queue status API test**
+
+Verify that `GET /api/v1/ingest/queue` returns `pending`, `retrying`, `retry_due`, `processing`, `stale_processing`, `failed`, and `claimable` counts.
+
+- [x] **Step 2: Run test to verify RED**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py::test_ingest_queue_status_reports_worker_backlog -q
+```
+
+Observed: failed with `404` because `/api/v1/ingest/queue` did not exist.
+
+- [x] **Step 3: Implement queue status service and route**
+
+Add `IngestQueueStatusResponse`, `IngestService.get_queue_status()`, and `GET /api/v1/ingest/queue`.
+
+- [x] **Step 4: Verify GREEN**
+
+Run:
+
+```bash
+uv run pytest tests/test_ingest.py tests/test_feed_worker_script.py tests/test_observability.py -q
+uv run ruff check .
+uv run mypy app scripts tests/test_ingest.py tests/test_observability.py tests/test_feed_worker_script.py
+```
+
+Observed: passed.
+
+## Task 25: Documentation and Full Verification
+
 **Files:**
 - Modify: `backend/AGENTS.md`
 
-- [ ] **Step 1: Update backend guidance**
+- [x] **Step 1: Update backend guidance**
 
 Document that request ID middleware, unified error envelope, and production config fail-fast are now established rules.
 

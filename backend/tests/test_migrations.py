@@ -80,6 +80,9 @@ def test_alembic_upgrade_head_creates_users_table(tmp_path: Path) -> None:
         "article_id",
         "status",
         "error_message",
+        "attempt_count",
+        "next_retry_at",
+        "locked_at",
         "created_at",
         "updated_at",
     } <= ingest_job_columns
