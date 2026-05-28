@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Session Sync 使用说明</title>
+  <style>
+    :root {
+      color: #1f2937;
+      background: #f7f8fb;
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      line-height: 1.68;
+    }
+
+    body {
+      margin: 0;
+      padding: 32px 20px;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 34px;
+    }
+
+    h1 {
+      margin: 0 0 18px;
+      font-size: 30px;
+      color: #111827;
+    }
+
+    h2 {
+      margin-top: 34px;
+      padding-top: 18px;
+      border-top: 1px solid #eef0f4;
+      font-size: 22px;
+      color: #111827;
+    }
+
+    h3 {
+      margin-top: 24px;
+      font-size: 18px;
+      color: #111827;
+    }
+
+    p {
+      margin: 12px 0;
+    }
+
+    ul,
+    ol {
+      padding-left: 24px;
+    }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      background: #f3f4f6;
+      border-radius: 4px;
+      padding: 2px 5px;
+      font-size: 0.95em;
+    }
+
+    pre {
+      overflow-x: auto;
+      background: #111827;
+      color: #f9fafb;
+      padding: 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+
+    .note {
+      border-left: 4px solid #2563eb;
+      background: #eff6ff;
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin: 18px 0;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Codex Session Sync 使用说明</h1>
+
+    <h2>这个工具做什么</h2>
+    <p><code>codex_check</code> 是一个 Codex Desktop 本地会话同步原型工具。它通过导出、导入 <code>.codex</code> 中的会话文件，让另一台设备尽量能在 Codex Desktop 原生会话列表中看到并继续历史会话。</p>
+    <div class="note">第一版推荐用法是“本地导出包 + 同步盘目录”：设备 A 生成导出包并放入同步盘目录，设备 B 从同步盘目录拉取并导入。</div>
+
+    <h2>运行环境</h2>
+    <p>工具是零依赖 Python CLI，只使用 Python 标准库。</p>
+    <pre><code>C:\Users\hyperchain\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m codex_check.sync_tool --help</code></pre>
+    <p>如果系统已经安装 Python，也可以使用：</p>
+    <pre><code>python -m codex_check.sync_tool --help</code></pre>
+
+    <h2>同步内容</h2>
+    <p>会同步：</p>
+    <ul>
+      <li><code>.codex/sessions/**/rollout-*.jsonl</code></li>
+      <li>对应的 <code>.codex/session_index.jsonl</code> 条目</li>
+      <li>少量 thread 相关状态字段</li>
+    </ul>
+    <p>不会同步：</p>
+    <ul>
+      <li><code>auth.json</code>、<code>installation_id</code>、<code>cap_sid</code></li>
+      <li><code>*.sqlite</code>、<code>*.sqlite-wal</code>、<code>*.sqlite-shm</code></li>
+      <li><code>.sandbox-secrets</code>、<code>cache</code>、<code>plugins</code>、<code>node_repl</code>、日志数据库</li>
+    </ul>
+    <p>因此，两台设备需要各自已经正常登录 Codex。</p>
+
+    <h2>命令总览</h2>
+    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" export --project "&lt;项目路径&gt;" --output-dir "&lt;导出目录&gt;"
+python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" export --all --output-dir "&lt;导出目录&gt;"
+python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" import "&lt;导出包.zip&gt;"
+python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" push --project "&lt;项目路径&gt;" --sync-dir "&lt;同步目录&gt;"
+python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" push --all --sync-dir "&lt;同步目录&gt;"
+python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" pull --sync-dir "&lt;同步目录&gt;"
+python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" status --sync-dir "&lt;同步目录&gt;"
+python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" rollback</code></pre>
+
+    <h2>按项目导出</h2>
+    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" export --project "C:\Users\hyperchain\Desktop\AI学习\i-do-love" --output-dir "D:\codex-session-sync\exports"</code></pre>
+    <p>产出示例：</p>
+    <pre><code>D:\codex-session-sync\exports\codex-session-export-project-20260528-153000.zip</code></pre>
+    <p>项目模式会读取 session JSONL 第一条 <code>session_meta.payload.cwd</code>，与 <code>--project</code> 传入路径做标准化比较。</p>
+
+    <h2>导出全部会话</h2>
+    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" export --all --output-dir "D:\codex-session-sync\exports"</code></pre>
+    <p>产出示例：</p>
+    <pre><code>D:\codex-session-sync\exports\codex-session-export-all-20260528-160000.zip</code></pre>
+
+    <h2>推送到同步盘目录</h2>
+    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" push --project "C:\Users\hyperchain\Desktop\AI学习\i-do-love" --sync-dir "D:\codex-session-sync"</code></pre>
+    <p>产出：</p>
+    <pre><code>D:\codex-session-sync\exports\codex-session-export-project-20260528-153000.zip
+D:\codex-session-sync\latest-manifest.json</code></pre>
+
+    <h2>从同步盘拉取</h2>
+    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" pull --sync-dir "D:\codex-session-sync"</code></pre>
+    <p>导入产出：</p>
+    <pre><code>%USERPROFILE%\.codex\session-sync-backups\&lt;timestamp&gt;\
+%USERPROFILE%\.codex\session-sync-last-import-report.json</code></pre>
+    <p>导入后建议重启 Codex Desktop，让侧边栏重新加载。</p>
+
+    <h2>直接导入某个 zip</h2>
+    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" import "D:\codex-session-sync\exports\codex-session-export-project-20260528-153000.zip"</code></pre>
+
+    <h2>查看状态</h2>
+    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" status --sync-dir "D:\codex-session-sync"</code></pre>
+    <p>状态输出包含本机会话数量、同步目录、最新 manifest 是否存在、最新导出时间和 thread 数量。</p>
+
+    <h2>回滚最近一次导入</h2>
+    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" rollback</code></pre>
+    <p>回滚会恢复 <code>sessions</code>、<code>session_index.jsonl</code> 和 <code>.codex-global-state.json</code>。</p>
+
+    <h2>推荐双设备流程</h2>
+    <h3>设备 A</h3>
+    <ol>
+      <li>关闭 Codex Desktop。</li>
+      <li>执行 <code>push --project ... --sync-dir ...</code> 或 <code>push --all --sync-dir ...</code>。</li>
+      <li>等待同步盘完成同步。</li>
+    </ol>
+    <h3>设备 B</h3>
+    <ol>
+      <li>关闭 Codex Desktop。</li>
+      <li>执行 <code>pull --sync-dir ...</code>。</li>
+      <li>打开 Codex Desktop。</li>
+      <li>检查会话列表中是否出现导入的 thread。</li>
+      <li>打开会话并继续使用。</li>
+    </ol>
+
+    <h2>冲突处理</h2>
+    <p>如果目标设备已经存在同一个 thread id，内容完全一致会跳过并记录为 <code>skipped</code>；内容不同会默认不覆盖并记录为 <code>conflicted</code>。</p>
+    <pre><code>%USERPROFILE%\.codex\session-sync-last-import-report.json</code></pre>
+
+    <h2>导出包内容</h2>
+    <pre><code>codex-session-export.zip
+├── manifest.json
+├── sessions/
+│   └── 2026/05/28/rollout-...jsonl
+├── session_index.jsonl
+└── global_state_patch.json</code></pre>
+
+    <h2>注意事项</h2>
+    <ul>
+      <li>导入前建议关闭 Codex Desktop。</li>
+      <li>不要同步整个 <code>.codex</code> 目录。</li>
+      <li>不要同步认证和 SQLite 文件。</li>
+      <li>同步目录里可能包含敏感对话内容，请放在可信位置。</li>
+      <li>如果 Codex 后续改变本地存储格式，这个工具可能需要调整。</li>
+    </ul>
+
+    <h2>验证测试</h2>
+    <pre><code>python -m unittest discover -s codex_check\tests -v</code></pre>
+  </main>
+</body>
+</html>
