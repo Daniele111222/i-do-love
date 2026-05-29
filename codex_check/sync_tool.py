@@ -6,6 +6,7 @@ import json
 import os
 import platform
 import shutil
+import sys
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -16,6 +17,17 @@ from typing import Any
 
 # 只允许同步明确和 thread 相关的状态字段，避免把认证、窗口状态、插件状态等机器绑定数据带到另一台设备。
 THREAD_STATE_KEYS = ("heartbeat-thread-permissions-by-id", "thread-workspace-root-hints")
+PLACEHOLDER_VALUES = {
+    "你的同步盘目录",
+    "<同步目录>",
+    "同步目录",
+    "your-sync-dir",
+    "<sync-dir>",
+}
+
+
+class UserFacingError(RuntimeError):
+    """需要直接展示给 CLI 用户的可理解错误。"""
 
 
 @dataclass(frozen=True)
@@ -35,6 +47,19 @@ def export_sessions(codex_root: Path, output_dir: Path, project: str | None = No
     output_dir.mkdir(parents=True, exist_ok=True)
     index_entries = _read_index(codex_root / "session_index.jsonl")
     sessions = _collect_sessions(codex_root, index_entries, project)
+    if project and not sessions:
+        raise UserFacingError(
+            "没有找到匹配项目路径的 Codex 会话。\n"
+            f"项目路径: {project}\n"
+            f"Codex 根目录: {codex_root}\n"
+            "请确认该项目曾经在 Codex 中打开过，并且路径与 session_meta.payload.cwd 完全一致。"
+        )
+    if not project and not sessions:
+        raise UserFacingError(
+            "没有找到可导出的 Codex 会话。\n"
+            f"Codex 根目录: {codex_root}\n"
+            "请确认 sessions 目录存在且包含 rollout-*.jsonl 文件。"
+        )
     mode = "project" if project else "all"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     export_path = output_dir / f"codex-session-export-{mode}-{timestamp}.zip"
@@ -167,6 +192,7 @@ def rollback_last_import(codex_root: Path) -> Path:
 
 
 def push_sessions(codex_root: Path, sync_dir: Path, project: str | None = None) -> Path:
+    _validate_sync_dir(sync_dir)
     exports_dir = sync_dir / "exports"
     export_path = export_sessions(codex_root, exports_dir, project=project)
     sync_dir.mkdir(parents=True, exist_ok=True)
@@ -179,8 +205,22 @@ def push_sessions(codex_root: Path, sync_dir: Path, project: str | None = None) 
 
 
 def pull_sessions(codex_root: Path, sync_dir: Path) -> dict[str, Any]:
-    manifest = json.loads((sync_dir / "latest-manifest.json").read_text(encoding="utf-8"))
+    _validate_sync_dir(sync_dir)
+    latest = sync_dir / "latest-manifest.json"
+    if not latest.exists():
+        raise UserFacingError(
+            "同步目录中没有 latest-manifest.json，无法 pull。\n"
+            f"同步目录: {sync_dir}\n"
+            "请先在另一台设备执行 push，或确认同步盘已经完成同步。"
+        )
+    manifest = json.loads(latest.read_text(encoding="utf-8"))
     export_file = sync_dir / manifest["export_file"]
+    if not export_file.exists():
+        raise UserFacingError(
+            "latest-manifest.json 指向的导出包不存在。\n"
+            f"导出包: {export_file}\n"
+            "请确认同步盘中的 exports 目录已经同步完整。"
+        )
     return import_sessions(codex_root, export_file)
 
 
@@ -195,6 +235,23 @@ def status(codex_root: Path, sync_dir: Path | None = None) -> dict[str, Any]:
             manifest = json.loads(latest.read_text(encoding="utf-8"))
             result["latest_exported_at"] = manifest.get("exported_at")
             result["latest_threads"] = len(manifest.get("threads", []))
+    return result
+
+
+def doctor(codex_root: Path, project: str | None = None, sync_dir: Path | None = None) -> dict[str, Any]:
+    index_entries = _read_index(codex_root / "session_index.jsonl")
+    sessions = _collect_sessions(codex_root, index_entries, project)
+    result: dict[str, Any] = {
+        "codex_root": str(codex_root),
+        "codex_root_exists": codex_root.exists(),
+        "sessions_dir_exists": (codex_root / "sessions").exists(),
+        "session_index_exists": (codex_root / "session_index.jsonl").exists(),
+        "project": project,
+        "matching_sessions": len(sessions),
+    }
+    if sync_dir is not None:
+        result["sync_dir"] = str(sync_dir)
+        result["sync_dir_writable"] = _is_writable_dir(sync_dir)
     return result
 
 
@@ -224,23 +281,39 @@ def main(argv: list[str] | None = None) -> int:
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("--sync-dir", type=Path)
 
+    doctor_parser = subparsers.add_parser("doctor")
+    doctor_parser.add_argument("--project")
+    doctor_parser.add_argument("--sync-dir", type=Path)
+
     subparsers.add_parser("rollback")
 
     args = parser.parse_args(argv)
-    if args.command == "export":
-        path = export_sessions(args.codex_root, args.output_dir, project=args.project)
-        print(path)
-    elif args.command == "import":
-        print(json.dumps(import_sessions(args.codex_root, args.export_zip), ensure_ascii=False, indent=2))
-    elif args.command == "push":
-        path = push_sessions(args.codex_root, args.sync_dir, project=args.project)
-        print(path)
-    elif args.command == "pull":
-        print(json.dumps(pull_sessions(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
-    elif args.command == "status":
-        print(json.dumps(status(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
-    elif args.command == "rollback":
-        print(rollback_last_import(args.codex_root))
+    try:
+        if args.command == "export":
+            path = export_sessions(args.codex_root, args.output_dir, project=args.project)
+            print(f"导出成功: {path}")
+        elif args.command == "import":
+            report = import_sessions(args.codex_root, args.export_zip)
+            print("导入完成:")
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        elif args.command == "push":
+            path = push_sessions(args.codex_root, args.sync_dir, project=args.project)
+            print(f"推送成功: {path}")
+            print(f"同步清单: {args.sync_dir / 'latest-manifest.json'}")
+        elif args.command == "pull":
+            print(json.dumps(pull_sessions(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
+        elif args.command == "status":
+            print(json.dumps(status(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
+        elif args.command == "doctor":
+            _print_doctor_report(doctor(args.codex_root, args.project, args.sync_dir))
+        elif args.command == "rollback":
+            print(f"回滚完成，使用备份: {rollback_last_import(args.codex_root)}")
+    except UserFacingError as error:
+        print(f"错误: {error}", file=sys.stderr)
+        return 2
+    except Exception as error:  # noqa: BLE001 - CLI 入口需要兜底展示异常原因。
+        print(f"未预期错误: {type(error).__name__}: {error}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -404,6 +477,40 @@ def _merge_global_state(target_path: Path, patch_path: Path) -> None:
             current.update(value)
             state[key] = current
     _atomic_write_text(target_path, json.dumps(state, ensure_ascii=False, indent=2))
+
+
+def _validate_sync_dir(sync_dir: Path) -> None:
+    raw_value = str(sync_dir).strip().strip('"')
+    if raw_value in PLACEHOLDER_VALUES or "你的" in raw_value or "<" in raw_value or ">" in raw_value:
+        raise UserFacingError(
+            "不是有效的同步盘目录，你传入的看起来仍是文档里的占位文字。\n"
+            f"收到的值: {sync_dir}\n"
+            "请改成真实目录，例如 OneDrive/Syncthing/NAS 中两台设备都能访问的文件夹。"
+        )
+
+
+def _is_writable_dir(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=True, dir=path) as handle:
+            handle.write("ok")
+        return True
+    except OSError:
+        return False
+
+
+def _print_doctor_report(report: dict[str, Any]) -> None:
+    print("Codex Session Sync 诊断")
+    print(f"Codex 根目录: {report['codex_root']}")
+    print(f"Codex 根目录存在: {'是' if report['codex_root_exists'] else '否'}")
+    print(f"sessions 目录存在: {'是' if report['sessions_dir_exists'] else '否'}")
+    print(f"session_index.jsonl 存在: {'是' if report['session_index_exists'] else '否'}")
+    if report.get("project"):
+        print(f"项目路径: {report['project']}")
+    print(f"匹配项目会话数: {report['matching_sessions']}")
+    if "sync_dir" in report:
+        print(f"同步目录: {report['sync_dir']}")
+        print(f"同步目录可写: {'是' if report['sync_dir_writable'] else '否'}")
 
 
 def _sha256(path: Path) -> str:

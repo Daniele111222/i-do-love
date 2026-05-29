@@ -98,9 +98,21 @@
 
     <h2>运行环境</h2>
     <p>工具是零依赖 Python CLI，只使用 Python 标准库。</p>
+    <p>推荐在 Windows 上使用包装脚本，这样不管你当前在哪个项目目录，都能运行到本仓库里的 <code>codex_check</code>：</p>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --help</code></pre>
+    <p>也可以在 <code>i-do-love</code> 仓库根目录中直接使用内置 Python：</p>
     <pre><code>C:\Users\hyperchain\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe -m codex_check.sync_tool --help</code></pre>
-    <p>如果系统已经安装 Python，也可以使用：</p>
+    <p>如果系统已经安装 Python，并且当前目录就是 <code>i-do-love</code> 仓库根目录，也可以使用：</p>
     <pre><code>python -m codex_check.sync_tool --help</code></pre>
+    <p>如果你在其他项目目录中运行，例如 <code>C:\Users\hyperchain\Desktop\personal_auth_h5</code>，必须优先使用 <code>run_sync.cmd</code>，否则 Python 可能找不到 <code>codex_check</code> 包。</p>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" doctor --project "C:\Users\hyperchain\Desktop\AI学习\i-do-love" --sync-dir "D:\codex"</code></pre>
+
+    <h2>同步盘目录怎么填</h2>
+    <p><code>--sync-dir</code> 必须是真实存在或可创建的同步目录，不能把文档里的 <code>你的同步盘目录</code> 原样复制进去。</p>
+    <pre><code>C:\Users\你的用户名\OneDrive\codex-session-sync
+D:\Syncthing\codex-session-sync
+Z:\codex-session-sync</code></pre>
+    <p>如果传入 <code>你的同步盘目录</code>、<code>&lt;同步目录&gt;</code> 这类占位文字，工具会直接报错，避免静默写到错误位置。</p>
 
     <h2>同步内容</h2>
     <p>会同步：</p>
@@ -118,48 +130,52 @@
     <p>因此，两台设备需要各自已经正常登录 Codex。</p>
 
     <h2>命令总览</h2>
-    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" export --project "&lt;项目路径&gt;" --output-dir "&lt;导出目录&gt;"
-python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" export --all --output-dir "&lt;导出目录&gt;"
-python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" import "&lt;导出包.zip&gt;"
-python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" push --project "&lt;项目路径&gt;" --sync-dir "&lt;同步目录&gt;"
-python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" push --all --sync-dir "&lt;同步目录&gt;"
-python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" pull --sync-dir "&lt;同步目录&gt;"
-python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" status --sync-dir "&lt;同步目录&gt;"
-python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" rollback</code></pre>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" doctor --project "&lt;项目路径&gt;" --sync-dir "C:\Users\你的用户名\OneDrive\codex-session-sync"
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" export --project "&lt;项目路径&gt;" --output-dir "&lt;导出目录&gt;"
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" export --all --output-dir "&lt;导出目录&gt;"
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" import "&lt;导出包.zip&gt;"
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" push --project "&lt;项目路径&gt;" --sync-dir "C:\Users\你的用户名\OneDrive\codex-session-sync"
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" push --all --sync-dir "C:\Users\你的用户名\OneDrive\codex-session-sync"
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" pull --sync-dir "C:\Users\你的用户名\OneDrive\codex-session-sync"
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" status --sync-dir "C:\Users\你的用户名\OneDrive\codex-session-sync"
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" rollback</code></pre>
 
     <h2>按项目导出</h2>
-    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" export --project "C:\Users\hyperchain\Desktop\AI学习\i-do-love" --output-dir "D:\codex-session-sync\exports"</code></pre>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" export --project "C:\Users\hyperchain\Desktop\AI学习\i-do-love" --output-dir "D:\codex-session-sync\exports"</code></pre>
     <p>产出示例：</p>
     <pre><code>D:\codex-session-sync\exports\codex-session-export-project-20260528-153000.zip</code></pre>
     <p>项目模式会读取 session JSONL 第一条 <code>session_meta.payload.cwd</code>，与 <code>--project</code> 传入路径做标准化比较。</p>
 
     <h2>导出全部会话</h2>
-    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" export --all --output-dir "D:\codex-session-sync\exports"</code></pre>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" export --all --output-dir "D:\codex-session-sync\exports"</code></pre>
     <p>产出示例：</p>
     <pre><code>D:\codex-session-sync\exports\codex-session-export-all-20260528-160000.zip</code></pre>
 
     <h2>推送到同步盘目录</h2>
-    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" push --project "C:\Users\hyperchain\Desktop\AI学习\i-do-love" --sync-dir "D:\codex-session-sync"</code></pre>
+    <p>下面的 <code>D:\codex-session-sync</code> 只是示例，请替换成你的真实同步目录。</p>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" push --project "C:\Users\hyperchain\Desktop\AI学习\i-do-love" --sync-dir "D:\codex-session-sync"</code></pre>
+    <p>如果使用 U 盘上的 <code>D:\codex</code>，推荐使用：</p>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" push --project "C:\Users\hyperchain\Desktop\AI学习\i-do-love" --sync-dir "D:\codex"</code></pre>
     <p>产出：</p>
     <pre><code>D:\codex-session-sync\exports\codex-session-export-project-20260528-153000.zip
 D:\codex-session-sync\latest-manifest.json</code></pre>
 
     <h2>从同步盘拉取</h2>
-    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" pull --sync-dir "D:\codex-session-sync"</code></pre>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" pull --sync-dir "D:\codex-session-sync"</code></pre>
     <p>导入产出：</p>
     <pre><code>%USERPROFILE%\.codex\session-sync-backups\&lt;timestamp&gt;\
 %USERPROFILE%\.codex\session-sync-last-import-report.json</code></pre>
     <p>导入后建议重启 Codex Desktop，让侧边栏重新加载。</p>
 
     <h2>直接导入某个 zip</h2>
-    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" import "D:\codex-session-sync\exports\codex-session-export-project-20260528-153000.zip"</code></pre>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" import "D:\codex-session-sync\exports\codex-session-export-project-20260528-153000.zip"</code></pre>
 
     <h2>查看状态</h2>
-    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" status --sync-dir "D:\codex-session-sync"</code></pre>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" status --sync-dir "D:\codex-session-sync"</code></pre>
     <p>状态输出包含本机会话数量、同步目录、最新 manifest 是否存在、最新导出时间和 thread 数量。</p>
 
     <h2>回滚最近一次导入</h2>
-    <pre><code>python -m codex_check.sync_tool --codex-root "$env:USERPROFILE\.codex" rollback</code></pre>
+    <pre><code>C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" rollback</code></pre>
     <p>回滚会恢复 <code>sessions</code>、<code>session_index.jsonl</code> 和 <code>.codex-global-state.json</code>。</p>
 
     <h2>推荐双设备流程</h2>

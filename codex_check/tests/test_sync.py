@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -136,6 +138,91 @@ class SessionSyncTests(unittest.TestCase):
             self.assertIn(original, index_text)
             self.assertNotIn(imported, index_text)
             self.assertFalse(list((target / "sessions").rglob(f"*{imported}.jsonl")))
+
+    def test_cli_rejects_placeholder_sync_dir_with_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_root = Path(temp_dir) / ".codex"
+            write_session(codex_root, "019e6d54-2083-79f0-b1ad-afa92d6df592", PROJECT, "matching")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "codex_check.sync_tool",
+                    "--codex-root",
+                    str(codex_root),
+                    "push",
+                    "--project",
+                    PROJECT,
+                    "--sync-dir",
+                    "你的同步盘目录",
+                ],
+                cwd=Path(__file__).resolve().parents[2],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("不是有效的同步盘目录", result.stderr)
+
+    def test_cli_reports_when_project_has_no_matching_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            codex_root = Path(temp_dir) / ".codex"
+            output_dir = Path(temp_dir) / "out"
+            write_session(codex_root, "019e6d54-2083-79f0-b1ad-afa92d6df592", OTHER_PROJECT, "other")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "codex_check.sync_tool",
+                    "--codex-root",
+                    str(codex_root),
+                    "export",
+                    "--project",
+                    PROJECT,
+                    "--output-dir",
+                    str(output_dir),
+                ],
+                cwd=Path(__file__).resolve().parents[2],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("没有找到匹配项目路径的 Codex 会话", result.stderr)
+
+    def test_cli_doctor_reports_matching_sessions_and_writable_sync_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir)
+            codex_root = tmp_path / ".codex"
+            sync_dir = tmp_path / "sync"
+            write_session(codex_root, "019e6d54-2083-79f0-b1ad-afa92d6df592", PROJECT, "matching")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "codex_check.sync_tool",
+                    "--codex-root",
+                    str(codex_root),
+                    "doctor",
+                    "--project",
+                    PROJECT,
+                    "--sync-dir",
+                    str(sync_dir),
+                ],
+                cwd=Path(__file__).resolve().parents[2],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("匹配项目会话数: 1", result.stdout)
+            self.assertIn("同步目录可写: 是", result.stdout)
 
 
 if __name__ == "__main__":
