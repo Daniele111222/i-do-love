@@ -8,7 +8,13 @@ import unittest
 import zipfile
 from pathlib import Path
 
-from codex_check.sync_tool import export_sessions, import_sessions, rollback_last_import
+from codex_check.sync_tool import (
+    UserFacingError,
+    diff_sessions,
+    export_sessions,
+    import_sessions,
+    rollback_last_import,
+)
 
 
 PROJECT = r"C:\Users\hyperchain\Desktop\AI学习\i-do-love"
@@ -119,6 +125,116 @@ class SessionSyncTests(unittest.TestCase):
 
             self.assertEqual(report["conflicted"], [thread_id])
             self.assertEqual(target_session.read_text(encoding="utf-8"), before)
+
+    def test_import_dry_run_reports_changes_without_writing_files_or_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir)
+            source = tmp_path / "source" / ".codex"
+            target = tmp_path / "target" / ".codex"
+            thread_id = "019e6d54-2083-79f0-b1ad-afa92d6df592"
+            write_session(source, thread_id, PROJECT, "import me")
+            export_path = export_sessions(source, tmp_path / "out", project=PROJECT)
+
+            report = import_sessions(target, export_path, dry_run=True)
+
+            self.assertEqual(report["copied"], [thread_id])
+            self.assertTrue(report["dry_run"])
+            self.assertFalse((target / "sessions").exists())
+            self.assertFalse((target / "session_index.jsonl").exists())
+            self.assertFalse((target / "session-sync-backups").exists())
+
+    def test_import_overwrite_conflict_replaces_existing_session(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir)
+            source = tmp_path / "source" / ".codex"
+            target = tmp_path / "target" / ".codex"
+            thread_id = "019e6d54-2083-79f0-b1ad-afa92d6df592"
+            write_session(source, thread_id, PROJECT, "from source", body="new")
+            target_session = write_session(target, thread_id, PROJECT, "existing", body="old")
+            export_path = export_sessions(source, tmp_path / "out", project=PROJECT)
+
+            report = import_sessions(target, export_path, conflict_policy="overwrite")
+
+            self.assertEqual(report["overwritten"], [thread_id])
+            self.assertIn("new", target_session.read_text(encoding="utf-8"))
+
+    def test_import_keep_both_conflict_copies_session_with_new_thread_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir)
+            source = tmp_path / "source" / ".codex"
+            target = tmp_path / "target" / ".codex"
+            thread_id = "019e6d54-2083-79f0-b1ad-afa92d6df592"
+            write_session(source, thread_id, PROJECT, "from source", body="new")
+            write_session(target, thread_id, PROJECT, "existing", body="old")
+            export_path = export_sessions(source, tmp_path / "out", project=PROJECT)
+
+            report = import_sessions(target, export_path, conflict_policy="keep-both")
+
+            self.assertEqual(report["kept_both_original"], [thread_id])
+            self.assertEqual(len(report["copied_as"]), 1)
+            new_thread_id = report["copied_as"][0]["new_id"]
+            copied_files = list((target / "sessions").rglob(f"*{new_thread_id}.jsonl"))
+            index_text = (target / "session_index.jsonl").read_text(encoding="utf-8")
+            self.assertTrue(copied_files)
+            self.assertIn(new_thread_id, copied_files[0].read_text(encoding="utf-8"))
+            self.assertIn(new_thread_id, index_text)
+
+    def test_import_rejects_zip_entries_outside_export_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir)
+            export_path = tmp_path / "bad.zip"
+            with zipfile.ZipFile(export_path, "w") as archive:
+                archive.writestr("manifest.json", json.dumps({"schema_version": 1, "threads": []}))
+                archive.writestr("../evil.txt", "nope")
+
+            with self.assertRaises(UserFacingError):
+                import_sessions(tmp_path / ".codex", export_path)
+
+    def test_diff_sessions_reports_local_remote_matching_and_conflicts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir)
+            source = tmp_path / "source" / ".codex"
+            target = tmp_path / "target" / ".codex"
+            sync_dir = tmp_path / "sync"
+            matching = "019e6d54-2083-79f0-b1ad-afa92d6df592"
+            remote_only = "019e6d55-2083-79f0-b1ad-afa92d6df593"
+            local_only = "019e6d56-2083-79f0-b1ad-afa92d6df594"
+            conflicted = "019e6d57-2083-79f0-b1ad-afa92d6df595"
+            write_session(source, matching, PROJECT, "matching", body="same")
+            write_session(target, matching, PROJECT, "matching", body="same")
+            write_session(source, remote_only, PROJECT, "remote only")
+            write_session(target, local_only, PROJECT, "local only")
+            write_session(source, conflicted, PROJECT, "remote conflict", body="remote")
+            write_session(target, conflicted, PROJECT, "local conflict", body="local")
+            from codex_check.sync_tool import push_sessions
+
+            push_sessions(source, sync_dir, project=PROJECT)
+
+            report = diff_sessions(target, sync_dir)
+
+            self.assertEqual(report["matching"], [matching])
+            self.assertEqual(report["remote_only"], [remote_only])
+            self.assertEqual(report["local_only"], [local_only])
+            self.assertEqual(report["conflicted"], [conflicted])
+
+    def test_import_prunes_old_backups_after_successful_import(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir)
+            source = tmp_path / "source" / ".codex"
+            target = tmp_path / "target" / ".codex"
+            backup_root = target / "session-sync-backups"
+            for name in ("20260101-000000-000000", "20260102-000000-000000"):
+                old_backup = backup_root / name
+                old_backup.mkdir(parents=True)
+                (old_backup / "marker.txt").write_text(name, encoding="utf-8")
+            write_session(source, "019e6d54-2083-79f0-b1ad-afa92d6df592", PROJECT, "imported")
+            export_path = export_sessions(source, tmp_path / "out", project=PROJECT)
+
+            import_sessions(target, export_path, max_backups=2)
+
+            backups = sorted(path.name for path in backup_root.iterdir() if path.is_dir())
+            self.assertEqual(len(backups), 2)
+            self.assertNotIn("20260101-000000-000000", backups)
 
     def test_rollback_restores_last_import_backup(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

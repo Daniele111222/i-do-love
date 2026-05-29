@@ -89,6 +89,7 @@ C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-
 C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" push --all --sync-dir "C:\Users\你的用户名\OneDrive\codex-session-sync"
 C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" pull --sync-dir "C:\Users\你的用户名\OneDrive\codex-session-sync"
 C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" status --sync-dir "C:\Users\你的用户名\OneDrive\codex-session-sync"
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" diff --sync-dir "C:\Users\你的用户名\OneDrive\codex-session-sync"
 C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" rollback
 ```
 
@@ -153,6 +154,25 @@ D:\codex-session-sync\latest-manifest.json
 ## 从同步盘拉取
 
 在另一台设备上，等同步盘完成同步后执行：
+
+```powershell
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" diff --sync-dir "D:\codex-session-sync"
+```
+
+推荐先执行 `diff`，确认本机与同步盘之间有哪些差异：
+
+- `matching`：两边都有且内容一致。
+- `remote_only`：同步盘有、本机没有，pull 后会新增。
+- `local_only`：本机有、同步盘没有，不会被 pull 删除。
+- `conflicted`：两边 thread id 相同但内容不同，需要选择冲突策略。
+
+如果只是想预演导入结果，不写入任何文件，可以直接对 zip 使用 `--dry-run`：
+
+```powershell
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" import "D:\codex-session-sync\exports\codex-session-export-project-20260528-153000.zip" --dry-run
+```
+
+确认无误后再执行：
 
 ```powershell
 C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" pull --sync-dir "D:\codex-session-sync"
@@ -235,7 +255,28 @@ C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-
 %USERPROFILE%\.codex\session-sync-last-import-report.json
 ```
 
-第一版没有自动解决冲突。建议先查看报告，再决定是否手工处理或后续增加 `--overwrite`、`--keep-both` 等策略。
+直接导入 zip 时可以显式选择冲突策略：
+
+```powershell
+# 默认策略：遇到冲突不覆盖
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" import "<导出包.zip>" --conflict skip
+
+# 覆盖本机同 id 会话，适合确认同步盘版本更新时使用
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" import "<导出包.zip>" --conflict overwrite
+
+# 保留本机会话，同时把同步盘冲突会话复制为新 thread id
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" import "<导出包.zip>" --conflict keep-both
+```
+
+建议先运行 `--dry-run` 查看报告，再选择 `overwrite` 或 `keep-both`。
+
+导入前工具会校验 zip 内部路径，拒绝包含 `../` 或绝对路径的导出包，避免不可信 zip 写到 `.codex` 之外。
+
+如需限制备份数量，可以在导入时增加：
+
+```powershell
+C:\Users\hyperchain\Desktop\AI学习\i-do-love\codex_check\run_sync.cmd --codex-root "%USERPROFILE%\.codex" import "<导出包.zip>" --max-backups 10
+```
 
 ## 导出包内容
 

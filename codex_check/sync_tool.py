@@ -8,6 +8,7 @@ import platform
 import shutil
 import sys
 import tempfile
+import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -113,30 +114,49 @@ def export_sessions(codex_root: Path, output_dir: Path, project: str | None = No
     return export_path
 
 
-def import_sessions(codex_root: Path, export_path: Path) -> dict[str, Any]:
-    codex_root.mkdir(parents=True, exist_ok=True)
-    # 导入会改动 Codex 原生索引和 session 文件，先备份再写入，方便出现格式变化或误导入时回滚。
-    backup_dir = _backup_codex_state(codex_root)
+def import_sessions(
+    codex_root: Path,
+    export_path: Path,
+    *,
+    dry_run: bool = False,
+    conflict_policy: str = "skip",
+    max_backups: int | None = None,
+) -> dict[str, Any]:
+    if conflict_policy not in {"skip", "overwrite", "keep-both"}:
+        raise ValueError(f"Unsupported conflict_policy: {conflict_policy}")
+    if max_backups is not None and max_backups < 1:
+        raise ValueError("max_backups must be greater than 0")
+
+    if not dry_run:
+        codex_root.mkdir(parents=True, exist_ok=True)
+    backup_dir = None if dry_run else _backup_codex_state(codex_root)
     report: dict[str, Any] = {
+        "dry_run": dry_run,
+        "conflict_policy": conflict_policy,
         "copied": [],
+        "overwritten": [],
+        "kept_both_original": [],
+        "copied_as": [],
         "skipped": [],
         "conflicted": [],
         "failed": [],
-        "backup_dir": str(backup_dir),
+        "backup_dir": str(backup_dir) if backup_dir else None,
     }
 
     with tempfile.TemporaryDirectory() as temp_dir:
         extract_dir = Path(temp_dir)
-        with zipfile.ZipFile(export_path) as archive:
-            archive.extractall(extract_dir)
+        _extract_export_safely(export_path, extract_dir)
         manifest = json.loads((extract_dir / "manifest.json").read_text(encoding="utf-8"))
         if manifest.get("schema_version") != 1:
             raise ValueError("Unsupported manifest schema_version")
 
         target_sessions = _session_records_by_thread(codex_root)
+        source_index = _read_index(extract_dir / "session_index.jsonl")
+        index_entries_to_merge: list[dict[str, Any]] = []
+        copied_or_overwritten_ids: set[str] = set()
         for thread in manifest.get("threads", []):
             thread_id = thread["id"]
-            source_rel = thread["session_file"]
+            source_rel = _safe_relative_path(thread["session_file"])
             source_file = extract_dir / source_rel
             if not source_file.exists():
                 report["failed"].append(thread_id)
@@ -147,23 +167,55 @@ def import_sessions(codex_root: Path, export_path: Path) -> dict[str, Any]:
 
             existing = target_sessions.get(thread_id)
             if existing:
-                # 同 id 不同内容时默认跳过，避免覆盖另一台设备上已经继续过的会话。
                 if _sha256(existing) == thread["sha256"]:
                     report["skipped"].append(thread_id)
+                    index_entry = source_index.get(thread_id)
+                    if index_entry:
+                        index_entries_to_merge.append(index_entry)
+                    copied_or_overwritten_ids.add(thread_id)
                 else:
-                    report["conflicted"].append(thread_id)
+                    if conflict_policy == "overwrite":
+                        if not dry_run:
+                            shutil.copy2(source_file, existing)
+                        report["overwritten"].append(thread_id)
+                        index_entry = source_index.get(thread_id)
+                        if index_entry:
+                            index_entries_to_merge.append(index_entry)
+                        copied_or_overwritten_ids.add(thread_id)
+                    elif conflict_policy == "keep-both":
+                        new_thread_id = _new_thread_id(set(target_sessions) | copied_or_overwritten_ids)
+                        new_rel = _session_copy_path(source_rel, thread_id, new_thread_id)
+                        if not dry_run:
+                            _copy_session_with_thread_id(source_file, codex_root / new_rel, thread_id, new_thread_id)
+                        report["kept_both_original"].append(thread_id)
+                        report["copied_as"].append({"original_id": thread_id, "new_id": new_thread_id})
+                        index_entries_to_merge.append(
+                            _copy_index_entry(source_index.get(thread_id), thread, new_thread_id)
+                        )
+                        copied_or_overwritten_ids.add(new_thread_id)
+                    else:
+                        report["conflicted"].append(thread_id)
                 continue
 
             target_file = codex_root / source_rel
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_file, target_file)
+            if not dry_run:
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_file, target_file)
             report["copied"].append(thread_id)
+            index_entry = source_index.get(thread_id)
+            if index_entry:
+                index_entries_to_merge.append(index_entry)
+            copied_or_overwritten_ids.add(thread_id)
 
-        _merge_session_index(codex_root / "session_index.jsonl", extract_dir / "session_index.jsonl")
-        _merge_global_state(codex_root / ".codex-global-state.json", extract_dir / "global_state_patch.json")
+        if not dry_run:
+            _merge_index_entries(codex_root / "session_index.jsonl", index_entries_to_merge)
+            _merge_global_state(codex_root / ".codex-global-state.json", extract_dir / "global_state_patch.json")
 
-    report_path = codex_root / "session-sync-last-import-report.json"
-    _atomic_write_text(report_path, json.dumps(report, ensure_ascii=False, indent=2))
+    if not dry_run:
+        report_path = codex_root / "session-sync-last-import-report.json"
+        _atomic_write_text(report_path, json.dumps(report, ensure_ascii=False, indent=2))
+        if max_backups is not None:
+            _prune_backups(codex_root, max_backups)
     return report
 
 
@@ -224,6 +276,51 @@ def pull_sessions(codex_root: Path, sync_dir: Path) -> dict[str, Any]:
     return import_sessions(codex_root, export_file)
 
 
+def diff_sessions(codex_root: Path, sync_dir: Path) -> dict[str, Any]:
+    _validate_sync_dir(sync_dir)
+    latest = sync_dir / "latest-manifest.json"
+    if not latest.exists():
+        raise UserFacingError(
+            "同步目录中没有 latest-manifest.json，无法 diff。\n"
+            f"同步目录: {sync_dir}\n"
+            "请先在另一台设备执行 push，或确认同步盘已经完成同步。"
+        )
+    manifest = json.loads(latest.read_text(encoding="utf-8"))
+    export_file = sync_dir / manifest["export_file"]
+    if not export_file.exists():
+        raise UserFacingError(
+            "latest-manifest.json 指向的导出包不存在。\n"
+            f"导出包: {export_file}\n"
+            "请确认同步盘中的 exports 目录已经同步完整。"
+        )
+
+    local_records = _session_records_by_thread(codex_root)
+    local_hashes = {thread_id: _sha256(path) for thread_id, path in local_records.items()}
+    with tempfile.TemporaryDirectory() as temp_dir:
+        extract_dir = Path(temp_dir)
+        _extract_export_safely(export_file, extract_dir)
+        export_manifest = json.loads((extract_dir / "manifest.json").read_text(encoding="utf-8"))
+        remote_hashes = {
+            thread["id"]: thread["sha256"]
+            for thread in export_manifest.get("threads", [])
+            if "id" in thread and "sha256" in thread
+        }
+
+    local_ids = set(local_hashes)
+    remote_ids = set(remote_hashes)
+    shared_ids = local_ids & remote_ids
+    return {
+        "codex_root": str(codex_root),
+        "sync_dir": str(sync_dir),
+        "matching": sorted(thread_id for thread_id in shared_ids if local_hashes[thread_id] == remote_hashes[thread_id]),
+        "conflicted": sorted(
+            thread_id for thread_id in shared_ids if local_hashes[thread_id] != remote_hashes[thread_id]
+        ),
+        "local_only": sorted(local_ids - remote_ids),
+        "remote_only": sorted(remote_ids - local_ids),
+    }
+
+
 def status(codex_root: Path, sync_dir: Path | None = None) -> dict[str, Any]:
     session_count = len(_session_records_by_thread(codex_root))
     result: dict[str, Any] = {"codex_root": str(codex_root), "local_sessions": session_count}
@@ -268,6 +365,14 @@ def main(argv: list[str] | None = None) -> int:
 
     import_parser = subparsers.add_parser("import")
     import_parser.add_argument("export_zip", type=Path)
+    import_parser.add_argument("--dry-run", action="store_true")
+    import_parser.add_argument(
+        "--conflict",
+        choices=("skip", "overwrite", "keep-both"),
+        default="skip",
+        help="How to handle same thread id with different content.",
+    )
+    import_parser.add_argument("--max-backups", type=int)
 
     push_parser = subparsers.add_parser("push")
     push_group = push_parser.add_mutually_exclusive_group(required=True)
@@ -281,6 +386,9 @@ def main(argv: list[str] | None = None) -> int:
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("--sync-dir", type=Path)
 
+    diff_parser = subparsers.add_parser("diff")
+    diff_parser.add_argument("--sync-dir", type=Path, required=True)
+
     doctor_parser = subparsers.add_parser("doctor")
     doctor_parser.add_argument("--project")
     doctor_parser.add_argument("--sync-dir", type=Path)
@@ -293,7 +401,13 @@ def main(argv: list[str] | None = None) -> int:
             path = export_sessions(args.codex_root, args.output_dir, project=args.project)
             print(f"导出成功: {path}")
         elif args.command == "import":
-            report = import_sessions(args.codex_root, args.export_zip)
+            report = import_sessions(
+                args.codex_root,
+                args.export_zip,
+                dry_run=args.dry_run,
+                conflict_policy=args.conflict,
+                max_backups=args.max_backups,
+            )
             print("导入完成:")
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.command == "push":
@@ -304,6 +418,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(pull_sessions(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
         elif args.command == "status":
             print(json.dumps(status(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
+        elif args.command == "diff":
+            print(json.dumps(diff_sessions(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
         elif args.command == "doctor":
             _print_doctor_report(doctor(args.codex_root, args.project, args.sync_dir))
         elif args.command == "rollback":
@@ -406,12 +522,36 @@ def _merge_session_index(target_path: Path, source_path: Path) -> None:
     _atomic_write_text(target_path, body)
 
 
+def _merge_index_entries(target_path: Path, entries: list[dict[str, Any]]) -> None:
+    merged = _read_index(target_path)
+    for entry in entries:
+        thread_id = entry.get("id")
+        if not thread_id:
+            continue
+        existing = merged.get(thread_id)
+        if not existing or _sort_time(entry.get("updated_at")) >= _sort_time(existing.get("updated_at")):
+            merged[thread_id] = entry
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    body = "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in merged.values())
+    _atomic_write_text(target_path, body)
+
+
 def _backup_codex_state(codex_root: Path) -> Path:
     backup_dir = codex_root / "session-sync-backups" / datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+    backup_dir.mkdir(parents=True, exist_ok=True)
     _copy_if_exists(codex_root / "sessions", backup_dir / "sessions")
     _copy_if_exists(codex_root / "session_index.jsonl", backup_dir / "session_index.jsonl")
     _copy_if_exists(codex_root / ".codex-global-state.json", backup_dir / ".codex-global-state.json")
     return backup_dir
+
+
+def _prune_backups(codex_root: Path, max_backups: int) -> None:
+    backup_root = codex_root / "session-sync-backups"
+    if not backup_root.exists():
+        return
+    backups = sorted(path for path in backup_root.iterdir() if path.is_dir())
+    for old_backup in backups[:-max_backups]:
+        shutil.rmtree(old_backup)
 
 
 def _copy_if_exists(source: Path, target: Path) -> None:
@@ -477,6 +617,74 @@ def _merge_global_state(target_path: Path, patch_path: Path) -> None:
             current.update(value)
             state[key] = current
     _atomic_write_text(target_path, json.dumps(state, ensure_ascii=False, indent=2))
+
+
+def _extract_export_safely(export_path: Path, extract_dir: Path) -> None:
+    extract_root = extract_dir.resolve()
+    with zipfile.ZipFile(export_path) as archive:
+        names = set(archive.namelist())
+        if "manifest.json" not in names:
+            raise UserFacingError("导出包缺少 manifest.json。")
+        for info in archive.infolist():
+            _safe_relative_path(info.filename)
+            target = (extract_root / info.filename).resolve()
+            if target != extract_root and extract_root not in target.parents:
+                raise UserFacingError(f"导出包包含不安全路径: {info.filename}")
+        archive.extractall(extract_root)
+
+
+def _safe_relative_path(value: str) -> Path:
+    path = PurePosixPath(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise UserFacingError(f"导出包包含不安全路径: {value}")
+    if not path.parts:
+        raise UserFacingError("导出包包含空路径。")
+    return Path(*path.parts)
+
+
+def _new_thread_id(existing_ids: set[str]) -> str:
+    while True:
+        thread_id = str(uuid.uuid4())
+        if thread_id not in existing_ids:
+            return thread_id
+
+
+def _session_copy_path(source_rel: Path, old_thread_id: str, new_thread_id: str) -> Path:
+    name = source_rel.name.replace(old_thread_id, new_thread_id)
+    if name == source_rel.name:
+        name = f"{source_rel.stem}-{new_thread_id}{source_rel.suffix}"
+    return source_rel.with_name(name)
+
+
+def _copy_session_with_thread_id(source_file: Path, target_file: Path, old_thread_id: str, new_thread_id: str) -> None:
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    with source_file.open("r", encoding="utf-8") as source, target_file.open("w", encoding="utf-8", newline="\n") as target:
+        for line in source:
+            if not line.strip():
+                target.write(line)
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                target.write(line)
+                continue
+            if item.get("type") == "session_meta":
+                payload = item.get("payload")
+                if isinstance(payload, dict) and payload.get("id") == old_thread_id:
+                    payload["id"] = new_thread_id
+            target.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+def _copy_index_entry(source_entry: dict[str, Any] | None, thread: dict[str, Any], new_thread_id: str) -> dict[str, Any]:
+    entry = dict(source_entry or {})
+    entry["id"] = new_thread_id
+    if "thread_name" not in entry and thread.get("thread_name"):
+        entry["thread_name"] = thread["thread_name"]
+    if entry.get("thread_name"):
+        entry["thread_name"] = f"{entry['thread_name']} (imported copy)"
+    if "updated_at" not in entry and thread.get("updated_at"):
+        entry["updated_at"] = thread["updated_at"]
+    return entry
 
 
 def _validate_sync_dir(sync_dir: Path) -> None:
