@@ -25,6 +25,8 @@ PLACEHOLDER_VALUES = {
     "your-sync-dir",
     "<sync-dir>",
 }
+CONFIG_SCHEMA_VERSION = 1
+DEFAULT_CONFIG_PATH = Path(__file__).with_name("codex-sync.json")
 
 
 class UserFacingError(RuntimeError):
@@ -41,6 +43,50 @@ class SessionRecord:
     size_bytes: int
     thread_name: str | None = None
     updated_at: str | None = None
+
+
+def load_config(config_path: Path | None = None) -> dict[str, Any]:
+    path = config_path or DEFAULT_CONFIG_PATH
+    if not path.exists():
+        return {}
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise UserFacingError(f"配置文件不是有效 JSON: {path}") from error
+    if not isinstance(config, dict):
+        raise UserFacingError(f"配置文件格式无效，应为 JSON object: {path}")
+    return config
+
+
+def save_config(
+    config_path: Path,
+    *,
+    codex_root: Path,
+    sync_dir: Path,
+    scope: str,
+    project: str | None,
+    max_backups: int | None = None,
+) -> Path:
+    if scope not in {"project", "all"}:
+        raise ValueError(f"Unsupported scope: {scope}")
+    if scope == "project" and not project:
+        raise UserFacingError("scope=project 时必须提供 --project。")
+    _validate_sync_dir(sync_dir)
+    payload: dict[str, Any] = {
+        "schema_version": CONFIG_SCHEMA_VERSION,
+        "codex_root": str(codex_root),
+        "sync_dir": str(sync_dir),
+        "scope": scope,
+    }
+    if project:
+        payload["project"] = project
+    if max_backups is not None:
+        if max_backups < 1:
+            raise UserFacingError("--max-backups 必须大于 0。")
+        payload["max_backups"] = max_backups
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(config_path, json.dumps(payload, ensure_ascii=False, indent=2))
+    return config_path
 
 
 def export_sessions(codex_root: Path, output_dir: Path, project: str | None = None) -> Path:
@@ -256,7 +302,14 @@ def push_sessions(codex_root: Path, sync_dir: Path, project: str | None = None) 
     return export_path
 
 
-def pull_sessions(codex_root: Path, sync_dir: Path) -> dict[str, Any]:
+def pull_sessions(
+    codex_root: Path,
+    sync_dir: Path,
+    *,
+    dry_run: bool = False,
+    conflict_policy: str = "skip",
+    max_backups: int | None = None,
+) -> dict[str, Any]:
     _validate_sync_dir(sync_dir)
     latest = sync_dir / "latest-manifest.json"
     if not latest.exists():
@@ -273,7 +326,13 @@ def pull_sessions(codex_root: Path, sync_dir: Path) -> dict[str, Any]:
             f"导出包: {export_file}\n"
             "请确认同步盘中的 exports 目录已经同步完整。"
         )
-    return import_sessions(codex_root, export_file)
+    return import_sessions(
+        codex_root,
+        export_file,
+        dry_run=dry_run,
+        conflict_policy=conflict_policy,
+        max_backups=max_backups,
+    )
 
 
 def diff_sessions(codex_root: Path, sync_dir: Path) -> dict[str, Any]:
@@ -353,15 +412,26 @@ def doctor(codex_root: Path, project: str | None = None, sync_dir: Path | None =
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Synchronize Codex Desktop session files.")
-    parser.add_argument("--codex-root", type=Path, default=Path.home() / ".codex")
+    parser = argparse.ArgumentParser(
+        prog="codex-sync",
+        description="Codex Session Sync - synchronize Codex Desktop session files.",
+    )
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG_PATH)
+    parser.add_argument("--codex-root", type=Path)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    init_parser = subparsers.add_parser("init")
+    init_parser.add_argument("--codex-root", type=Path, required=True)
+    init_parser.add_argument("--sync-dir", type=Path, required=True)
+    init_parser.add_argument("--scope", choices=("project", "all"), default="project")
+    init_parser.add_argument("--project")
+    init_parser.add_argument("--max-backups", type=int)
+
     export_parser = subparsers.add_parser("export")
-    export_group = export_parser.add_mutually_exclusive_group(required=True)
+    export_group = export_parser.add_mutually_exclusive_group()
     export_group.add_argument("--project")
     export_group.add_argument("--all", action="store_true")
-    export_parser.add_argument("--output-dir", type=Path, required=True)
+    export_parser.add_argument("--output-dir", type=Path)
 
     import_parser = subparsers.add_parser("import")
     import_parser.add_argument("export_zip", type=Path)
@@ -375,19 +445,27 @@ def main(argv: list[str] | None = None) -> int:
     import_parser.add_argument("--max-backups", type=int)
 
     push_parser = subparsers.add_parser("push")
-    push_group = push_parser.add_mutually_exclusive_group(required=True)
+    push_group = push_parser.add_mutually_exclusive_group()
     push_group.add_argument("--project")
     push_group.add_argument("--all", action="store_true")
-    push_parser.add_argument("--sync-dir", type=Path, required=True)
+    push_parser.add_argument("--sync-dir", type=Path)
 
     pull_parser = subparsers.add_parser("pull")
-    pull_parser.add_argument("--sync-dir", type=Path, required=True)
+    pull_parser.add_argument("--sync-dir", type=Path)
+    pull_parser.add_argument("--dry-run", action="store_true")
+    pull_parser.add_argument(
+        "--conflict",
+        choices=("skip", "overwrite", "keep-both"),
+        default=None,
+        help="How to handle same thread id with different content.",
+    )
+    pull_parser.add_argument("--max-backups", type=int)
 
     status_parser = subparsers.add_parser("status")
     status_parser.add_argument("--sync-dir", type=Path)
 
     diff_parser = subparsers.add_parser("diff")
-    diff_parser.add_argument("--sync-dir", type=Path, required=True)
+    diff_parser.add_argument("--sync-dir", type=Path)
 
     doctor_parser = subparsers.add_parser("doctor")
     doctor_parser.add_argument("--project")
@@ -397,33 +475,68 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     try:
-        if args.command == "export":
-            path = export_sessions(args.codex_root, args.output_dir, project=args.project)
+        config = load_config(args.config)
+        codex_root = _resolve_codex_root(args, config)
+
+        if args.command == "init":
+            config_path = save_config(
+                args.config,
+                codex_root=args.codex_root,
+                sync_dir=args.sync_dir,
+                scope=args.scope,
+                project=args.project,
+                max_backups=args.max_backups,
+            )
+            print(f"配置已写入: {config_path}")
+        elif args.command == "export":
+            project = _resolve_project_arg(args, config)
+            output_dir = _resolve_output_dir_arg(args, config)
+            path = export_sessions(codex_root, output_dir, project=project)
             print(f"导出成功: {path}")
         elif args.command == "import":
             report = import_sessions(
-                args.codex_root,
+                codex_root,
                 args.export_zip,
                 dry_run=args.dry_run,
                 conflict_policy=args.conflict,
-                max_backups=args.max_backups,
+                max_backups=_resolve_max_backups_arg(args, config),
             )
             print("导入完成:")
             print(json.dumps(report, ensure_ascii=False, indent=2))
         elif args.command == "push":
-            path = push_sessions(args.codex_root, args.sync_dir, project=args.project)
+            sync_dir = _resolve_sync_dir_arg(args, config)
+            project = _resolve_project_arg(args, config)
+            path = push_sessions(codex_root, sync_dir, project=project)
             print(f"推送成功: {path}")
-            print(f"同步清单: {args.sync_dir / 'latest-manifest.json'}")
+            print(f"同步清单: {sync_dir / 'latest-manifest.json'}")
         elif args.command == "pull":
-            print(json.dumps(pull_sessions(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
+            print(
+                json.dumps(
+                    pull_sessions(
+                        codex_root,
+                        _resolve_sync_dir_arg(args, config),
+                        dry_run=args.dry_run,
+                        conflict_policy=args.conflict or "skip",
+                        max_backups=_resolve_max_backups_arg(args, config),
+                    ),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
         elif args.command == "status":
-            print(json.dumps(status(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
+            print(json.dumps(status(codex_root, _resolve_optional_sync_dir_arg(args, config)), ensure_ascii=False, indent=2))
         elif args.command == "diff":
-            print(json.dumps(diff_sessions(args.codex_root, args.sync_dir), ensure_ascii=False, indent=2))
+            print(json.dumps(diff_sessions(codex_root, _resolve_sync_dir_arg(args, config)), ensure_ascii=False, indent=2))
         elif args.command == "doctor":
-            _print_doctor_report(doctor(args.codex_root, args.project, args.sync_dir))
+            _print_doctor_report(
+                doctor(
+                    codex_root,
+                    _resolve_project_arg(args, config, required=False),
+                    _resolve_optional_sync_dir_arg(args, config),
+                )
+            )
         elif args.command == "rollback":
-            print(f"回滚完成，使用备份: {rollback_last_import(args.codex_root)}")
+            print(f"回滚完成，使用备份: {rollback_last_import(codex_root)}")
     except UserFacingError as error:
         print(f"错误: {error}", file=sys.stderr)
         return 2
@@ -469,6 +582,57 @@ def _collect_sessions(
             )
         )
     return records
+
+
+def _resolve_codex_root(args: argparse.Namespace, config: dict[str, Any]) -> Path:
+    value = getattr(args, "codex_root", None) or config.get("codex_root") or Path.home() / ".codex"
+    return Path(value)
+
+
+def _resolve_sync_dir_arg(args: argparse.Namespace, config: dict[str, Any]) -> Path:
+    value = getattr(args, "sync_dir", None) or config.get("sync_dir")
+    if not value:
+        raise UserFacingError("缺少同步目录。请传入 --sync-dir，或先运行 init 写入配置。")
+    return Path(value)
+
+
+def _resolve_optional_sync_dir_arg(args: argparse.Namespace, config: dict[str, Any]) -> Path | None:
+    value = getattr(args, "sync_dir", None) or config.get("sync_dir")
+    return Path(value) if value else None
+
+
+def _resolve_output_dir_arg(args: argparse.Namespace, config: dict[str, Any]) -> Path:
+    value = getattr(args, "output_dir", None) or config.get("output_dir")
+    if value:
+        return Path(value)
+    sync_dir = config.get("sync_dir")
+    if sync_dir:
+        return Path(sync_dir) / "exports"
+    raise UserFacingError("缺少导出目录。请传入 --output-dir，或先运行 init 写入 sync_dir 配置。")
+
+
+def _resolve_project_arg(args: argparse.Namespace, config: dict[str, Any], *, required: bool = True) -> str | None:
+    if getattr(args, "all", False):
+        return None
+    value = getattr(args, "project", None)
+    if value:
+        return value
+    scope = config.get("scope")
+    if scope == "all":
+        return None
+    value = config.get("project")
+    if value:
+        return str(value)
+    if required:
+        raise UserFacingError("缺少项目路径。请传入 --project 或 --all，或先运行 init 写入配置。")
+    return None
+
+
+def _resolve_max_backups_arg(args: argparse.Namespace, config: dict[str, Any]) -> int | None:
+    value = getattr(args, "max_backups", None)
+    if value is None:
+        value = config.get("max_backups")
+    return int(value) if value is not None else None
 
 
 def _read_session_meta(session_file: Path) -> dict[str, Any] | None:

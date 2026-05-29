@@ -13,6 +13,7 @@ from codex_check.sync_tool import (
     diff_sessions,
     export_sessions,
     import_sessions,
+    load_config,
     rollback_last_import,
 )
 
@@ -339,6 +340,102 @@ class SessionSyncTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertIn("匹配项目会话数: 1", result.stdout)
             self.assertIn("同步目录可写: 是", result.stdout)
+
+    def test_cli_init_writes_config_inside_codex_check_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir)
+            codex_root = tmp_path / ".codex"
+            sync_dir = tmp_path / "sync"
+            config_path = tmp_path / "codex-sync.json"
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "codex_check.sync_tool",
+                    "--config",
+                    str(config_path),
+                    "init",
+                    "--codex-root",
+                    str(codex_root),
+                    "--sync-dir",
+                    str(sync_dir),
+                    "--project",
+                    PROJECT,
+                    "--scope",
+                    "project",
+                    "--max-backups",
+                    "7",
+                ],
+                cwd=Path(__file__).resolve().parents[2],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(config_path.exists())
+            config = load_config(config_path)
+            self.assertEqual(config["codex_root"], str(codex_root))
+            self.assertEqual(config["sync_dir"], str(sync_dir))
+            self.assertEqual(config["project"], PROJECT)
+            self.assertEqual(config["scope"], "project")
+            self.assertEqual(config["max_backups"], 7)
+
+    def test_cli_push_uses_config_defaults_for_short_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tmp_path = Path(temp_dir)
+            codex_root = tmp_path / ".codex"
+            sync_dir = tmp_path / "sync"
+            config_path = tmp_path / "codex-sync.json"
+            write_session(codex_root, "019e6d54-2083-79f0-b1ad-afa92d6df592", PROJECT, "matching")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "codex_root": str(codex_root),
+                        "sync_dir": str(sync_dir),
+                        "project": PROJECT,
+                        "scope": "project",
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "codex_check.sync_tool",
+                    "--config",
+                    str(config_path),
+                    "push",
+                ],
+                cwd=Path(__file__).resolve().parents[2],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue((sync_dir / "latest-manifest.json").exists())
+
+    def test_package_module_entrypoint_delegates_to_cli(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "codex_check",
+                "--help",
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Codex Session Sync", result.stdout)
 
 
 if __name__ == "__main__":
